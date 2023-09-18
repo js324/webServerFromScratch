@@ -15,12 +15,12 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <string>
-#include <thread>
-#include "threadpool.h"
+#include <sys/epoll.h>
+#include <fcntl.h>
 #define PORT "3490"  // the port users will be connecting to
 #define MAXDATASIZE 100
 #define BACKLOG 10	 // how many pending connections queue will hold
-
+#define MAX_EVENTS 10
 
 void sigchld_handler(int s)
 {
@@ -46,8 +46,7 @@ void *get_in_addr(struct sockaddr *sa)
 }
 
 void serve_connection(int fd) {
-	std::cout << "serving connection\n";
-    std::cout.flush();
+	
 	while (1) {
 		try {
 			if (send(fd, "Hello, world!", 13, 0) == -1) 
@@ -75,6 +74,7 @@ void serve_connection(int fd) {
 
 int main(void)
 {
+	
 	int sockfd, new_fd;  // listen on sock_fd, new connection on new_fd
 	struct addrinfo hints, *servinfo, *p;
 	struct sockaddr_storage their_addr; // connector's address information
@@ -83,7 +83,6 @@ int main(void)
 	int yes=1;
 	char s[INET6_ADDRSTRLEN];
 	int rv;
-	ThreadPool pool{};
 	memset(&hints, 0, sizeof hints);
 	hints.ai_family = AF_UNSPEC;
 	hints.ai_socktype = SOCK_STREAM;
@@ -137,23 +136,71 @@ int main(void)
 		exit(1);
 	}
 
+	struct epoll_event ev, events[MAX_EVENTS];
+	int epoll_fd;
+	if ((epoll_fd = epoll_create1(0)) == -1) {
+		perror("epoll_create1");
+	}
+	ev.events = EPOLLIN;
+	ev.data.fd = sockfd;
+	if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, sockfd, &ev) == -1) {
+		perror("epoll_ctl");
+		exit(1);
+	}
+	
+
 	printf("server: waiting for connections...\n");
-	pool.startUp();
-
-	while(1) {  // main accept() loop
-		sin_size = sizeof their_addr;
-		new_fd = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size);
-		if (new_fd == -1) {
-			perror("accept");
-			continue;
-		}
-
-		inet_ntop(their_addr.ss_family,
-			get_in_addr((struct sockaddr *)&their_addr),
-			s, sizeof s);
-		printf("server: got connection from %s\n", s);
+	AsyncHTTPServer(std::string ip, int port) {
 		
-		pool.queueJob([new_fd]() { serve_connection(new_fd); });
+	}
+    void runServer();
+    void closeServer();
+	while(1) {  // main accept() loop
+		new_fd = epoll_wait(epoll_fd, events, MAX_EVENTS, -1);
+		if (new_fd == -1) {
+			perror("epoll_wait");
+			exit(1);
+		}
+		// sin_size = sizeof their_addr; 
+		// int new_socket = accept(sockfd, (struct sockaddr *)&their_addr, &sin_size);
+		// std::cout << events[0].data.fd << std::endl;
+		for (int i = 0; i < new_fd; ++i) {
+			int conn_socket = -1;
+			if (events[i].data.fd == sockfd) { //listening
+				sin_size = sizeof their_addr;
+				if ((conn_socket = accept(sockfd, (struct sockaddr*)&their_addr, &sin_size)) == -1) {
+					perror("accept");
+					exit(1);
+				}
+				int status;
+				std::cout << conn_socket << std::endl;
+				if ((status = fcntl(conn_socket, F_SETFL, fcntl(conn_socket, F_GETFL, 0) | O_NONBLOCK)) == -1) {
+					perror("fnctl");
+					exit(1);
+				}
+				ev.events = EPOLLOUT | EPOLLIN | EPOLLET; //mark for reading and nonblocking
+				ev.data.fd = conn_socket;
+				
+				if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, conn_socket, &ev) == -1) {
+					perror("epoll_ctl: conn_socket");
+					exit(1);
+				}
+				
+			}
+			else {
+				if (events[i].events  & EPOLLIN) {
+					std::cout << "Reading event" << std::endl;
+					
+				}	
+				if (events[i].events & EPOLLOUT) {
+					
+				}
+			}
+		}
+		// inet_ntop(their_addr.ss_family,
+		// 	get_in_addr((struct sockaddr *)&their_addr),
+		// 	s, sizeof s);
+		// printf("server: got connection from %s\n", s);
 		
 		// close(new_fd);  // parent doesn't need this
 	}
