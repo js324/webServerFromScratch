@@ -40,12 +40,16 @@ private:
 					return;
 				}
 				buf[numbytes] = '\0';
-				serve_request(std::string(buf, numbytes));
-				printf("%s\n", buf);
 				if (numbytes == 0) {
 					std::cout << "Connection closed!\n";
 					return;
 				}
+				std::string resp = serve_request(std::string(buf, numbytes));
+				if (send(fd, &resp[0], MAXDATASIZE, 0) == -1) {
+					perror("send");
+					exit(1);
+				}
+				
 			}
 			catch (...) {
 				std::cout << "Connection failure!";

@@ -1,9 +1,39 @@
 #pragma once
 #include <string>
-
+#include <filesystem>
+#include <fstream> 
 #define PORT "3490"  // the port users will be connecting to
 #define BACKLOG 10	 // how many pending connections queue will hold
+struct header {
+        std::string name;
+        std::string value;
+    };
+struct request {
+    std::string method;
+    std::string URI;
+    std::vector<header> headers;
+    std::string body;
+};
 
+struct response {
+    std::string HTTP_version;
+    int status_code;
+    std::string reason;
+    std::vector<header> headers;
+    std::string body;
+    std::string toString() {
+        std::string res;
+        res = HTTP_version + " " + std::to_string(status_code) + " " + reason + "\r\n"; //bad to append so many times (copies)
+        for (auto& head : headers) {
+            res += head.name + ": " + head.value + "\r\n";
+        }
+        res += "\r\n";
+        if (body.length()) {
+            res += body; 
+        }
+        return res;
+    }
+};
 class TCPServer {
 private:
     std::string m_ip;
@@ -31,16 +61,80 @@ private:
         return &(((struct sockaddr_in6*)sa)->sin6_addr);
     }
 protected:
-    std::string serve_request(std::string request) {
+    std::string serve_request(std::string req) {
+        // std::cout<<request;
         size_t pos = 0;
+        
+        size_t prev = 0;
         std::string token;
-        std::string resp;
+        response resp;
         std::string delimiter = "\r\n";
-        while ((pos = request.find(delimiter)) != std::string::npos) {
-            token = request.substr(0, pos);
-            std::cout << token << std::endl;
-            request.erase(0, pos + delimiter.length());
+        request reqParsed{};
+        int first_time = 1;
+        while ((pos = req.find(delimiter, prev)) != std::string::npos) {
+            size_t linePos{};
+            size_t linePrev{};
+            token = req.substr(prev, pos-prev);
+            
+            // std::cout << token << std::endl;
+            std::string word{};
+            while ((linePos = token.find(" ", linePrev)) != std::string::npos) {
+                if (first_time) {
+                     //loop unroll
+                    word = token.substr(linePrev, linePos-linePrev);
+                    reqParsed.method = word;
+                    linePrev = linePos+1;
+                    // std::cout << reqParsed.method << std::endl;
+                   
+                    linePos = token.find(" ", linePrev);
+                    word = token.substr(linePrev, linePos-linePrev);
+                    reqParsed.URI = word;
+                    linePrev = linePos+1;
+                    // std::cout << reqParsed.URI << std::endl;
+                    
+                    linePos = token.find(" ", linePrev);
+                    word = token.substr(linePrev, linePos-linePrev);
+                    // std::cout << word << std::endl;
+                    if (word != "HTTP/1.1" && word != "HTTP/1.0") {
+                        return "400";
+                    }
+                    linePrev = linePos+1;
+                    
+                    first_time = 0;
+                    break;
+                }
+                header indHeader;
+                word = token.substr(linePrev, linePos-linePrev);
+                indHeader.name = word;
+                linePrev = linePos+1;
+                // std::cout << indHeader.name << std::endl;
+                
+                word = token.substr(linePrev, token.length()-linePrev);
+                indHeader.value = word;
+                linePrev = linePos+1;
+                // std::cout << indHeader.value << std::endl;
+                
+            }
+            
+            prev = pos+2;
         }
+        std::filesystem::path path(reqParsed.URI);
+        std::string dir = path.parent_path().string(); // "/home/dir1/dir2/dir3/dir4"
+        std::string file = path.filename().string(); // "file"
+        std::cout << dir << " " << file << std::endl;
+        resp.HTTP_version = "HTTP/1.1";
+        resp.status_code = 200;
+        resp.reason = "OK";
+        resp.headers.push_back({"Content-Type", "text/plain"});
+        resp.headers.push_back({"Content-Length", "6"});
+        resp.headers.push_back({"Connection", "close"});
+        resp.body = "Hello!";
+        if (dir == "/"  && file.length() == 0) {
+            std::cout << resp.toString() << std::endl;
+            return resp.toString();
+        } 
+
+        std::cout << "FIN" << std::endl;
         return "";
     }
     int bindAndListen() {
