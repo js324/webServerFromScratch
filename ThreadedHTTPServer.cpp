@@ -37,7 +37,7 @@ private:
 				
 				if ((numbytes = recv(fd, buf, MAXDATASIZE-1, 0)) == -1) {
 					perror("recv");
-					return;
+					throw;
 				}
 				buf[numbytes] = '\0';
 				if (numbytes == 0) {
@@ -45,14 +45,17 @@ private:
 					return;
 				}
 				std::string resp = serve_request(std::string(buf, numbytes));
-				if (send(fd, &resp[0], MAXDATASIZE, 0) == -1) {
+				//handle partial sends
+				if (send(fd, &resp[0], resp.length(), 0) == -1) {
 					perror("send");
-					exit(1);
+					throw;
 				}
 				
 			}
 			catch (...) {
 				std::cout << "Connection failure!";
+				close(fd);
+				return;
 			}
 		}
 }

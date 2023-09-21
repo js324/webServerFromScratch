@@ -118,22 +118,67 @@ protected:
             
             prev = pos+2;
         }
-        std::filesystem::path path(reqParsed.URI);
+        
+        resp.HTTP_version = "HTTP/1.1";
+            
+        auto path = std::filesystem::path(reqParsed.URI);
+        std::cout << path << std::endl;
+        if (path.compare(path.root_directory())) {
+            try {
+                std::cout << "Not root" << std::endl;
+                auto relPath = std::filesystem::canonical(path.string().substr(1));
+                std::cout << relPath << std::endl;
+                
+                if (relPath.empty() || relPath.string()[0] == '.' && relPath.string() != ".") {
+                    
+                    std::cout << "404" << std::endl;
+                    return "404";
+                }
+            }
+            catch (const std::filesystem::filesystem_error& e) {
+                
+				resp.status_code = 404;
+                resp.reason = "NOT FOUND";
+                resp.headers.push_back({"Content-Type", "text/html"});
+                resp.headers.push_back({"Connection", "close"});
+                resp.body = "Resource not found";
+                header contentLength = {"Content-Length", std::to_string(resp.body.length())};
+                resp.headers.push_back(contentLength);
+                
+                std::cout << "Thrown!" << resp.toString() << std::endl;
+                return resp.toString();
+			}
+        }
         std::string dir = path.parent_path().string(); // "/home/dir1/dir2/dir3/dir4"
         std::string file = path.filename().string(); // "file"
-        std::cout << dir << " " << file << std::endl;
-        resp.HTTP_version = "HTTP/1.1";
-        resp.status_code = 200;
-        resp.reason = "OK";
-        resp.headers.push_back({"Content-Type", "text/plain"});
-        resp.headers.push_back({"Content-Length", "6"});
-        resp.headers.push_back({"Connection", "close"});
-        resp.body = "Hello!";
-        if (dir == "/"  && file.length() == 0) {
-            std::cout << resp.toString() << std::endl;
-            return resp.toString();
-        } 
-
+        //get canonical make sure, it matches to current (doesn't break out)
+        if (reqParsed.method == "GET") {
+            resp.status_code = 200;
+            resp.reason = "OK";
+            resp.headers.push_back({"Content-Type", "text/html"});
+            
+            resp.headers.push_back({"Connection", "close"});
+            
+            if (dir == "/"  && file.length() == 0) {
+                file = "index.html";
+                std::ifstream t(file);
+                std::stringstream buffer;
+                buffer << t.rdbuf();
+                header contentLength = {"Content-Length", std::to_string(buffer.str().length())};
+                resp.headers.push_back(contentLength);
+                resp.body = buffer.str();
+                return resp.toString();
+            } 
+            else {
+                std::ifstream t(path.string().substr(1));
+                std::stringstream buffer;
+                buffer << t.rdbuf();
+                header contentLength = {"Content-Length", std::to_string(buffer.str().length())};
+                resp.headers.push_back(contentLength);
+                resp.body = buffer.str();
+                return resp.toString();
+            }
+        }
         std::cout << "FIN" << std::endl;
         return "";
     }
