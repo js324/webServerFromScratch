@@ -2,12 +2,12 @@
 #include <string>
 #include <filesystem>
 #include <fstream> 
+#include "stock_response.h"
+#include "header.h"
+#include "mime_types.h"
 #define PORT "3490"  // the port users will be connecting to
 #define BACKLOG 10	 // how many pending connections queue will hold
-struct header {
-        std::string name;
-        std::string value;
-    };
+
 struct request {
     std::string method;
     std::string URI;
@@ -15,25 +15,6 @@ struct request {
     std::string body;
 };
 
-struct response {
-    std::string HTTP_version;
-    int status_code;
-    std::string reason;
-    std::vector<header> headers;
-    std::string body;
-    std::string toString() {
-        std::string res;
-        res = HTTP_version + " " + std::to_string(status_code) + " " + reason + "\r\n"; //bad to append so many times (copies)
-        for (auto& head : headers) {
-            res += head.name + ": " + head.value + "\r\n";
-        }
-        res += "\r\n";
-        if (body.length()) {
-            res += body; 
-        }
-        return res;
-    }
-};
 class TCPServer {
 private:
     std::string m_ip;
@@ -61,6 +42,7 @@ private:
         return &(((struct sockaddr_in6*)sa)->sin6_addr);
     }
 protected:
+    
     std::string serve_request(std::string req) {
         // std::cout<<request;
         size_t pos = 0;
@@ -136,17 +118,9 @@ protected:
                 }
             }
             catch (const std::filesystem::filesystem_error& e) {
-                
-				resp.status_code = 404;
-                resp.reason = "NOT FOUND";
-                resp.headers.push_back({"Content-Type", "text/html"});
-                resp.headers.push_back({"Connection", "close"});
-                resp.body = "Resource not found";
-                header contentLength = {"Content-Length", std::to_string(resp.body.length())};
-                resp.headers.push_back(contentLength);
-                
+            
                 std::cout << "Thrown!" << resp.toString() << std::endl;
-                return resp.toString();
+                return getStockResponse(404).toString();
 			}
         }
         std::string dir = path.parent_path().string(); // "/home/dir1/dir2/dir3/dir4"
@@ -155,7 +129,6 @@ protected:
         if (reqParsed.method == "GET") {
             resp.status_code = 200;
             resp.reason = "OK";
-            resp.headers.push_back({"Content-Type", "text/html"});
             
             resp.headers.push_back({"Connection", "close"});
             
@@ -165,12 +138,20 @@ protected:
                 std::stringstream buffer;
                 buffer << t.rdbuf();
                 header contentLength = {"Content-Length", std::to_string(buffer.str().length())};
+                resp.headers.push_back({"Content-Type", "text/html"});
                 resp.headers.push_back(contentLength);
                 resp.body = buffer.str();
                 return resp.toString();
             } 
             else {
                 std::ifstream t(path.string().substr(1));
+                std::string extension = path.extension();
+                //create enum of mime struct later
+                std::string mime_type = getMIMEType(extension);
+                if (mime_type == "") {
+                    return getStockResponse(404).toString();
+                }
+                resp.headers.push_back({"Content-Type", mime_type});
                 std::stringstream buffer;
                 buffer << t.rdbuf();
                 header contentLength = {"Content-Length", std::to_string(buffer.str().length())};
