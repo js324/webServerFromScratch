@@ -2,6 +2,7 @@
 #include <string>
 #include <filesystem>
 #include <fstream> 
+#include <sstream>
 #include "stock_response.h"
 #include "header.h"
 #include "mime_types.h"
@@ -13,6 +14,8 @@ struct request {
     std::string URI;
     std::vector<header> headers;
     std::string body;
+    std::string reqUrl;
+    std::string userHostAddress;
 };
 
 class TCPServer {
@@ -105,6 +108,10 @@ protected:
             
         auto path = std::filesystem::path(reqParsed.URI);
         std::cout << path << std::endl;
+        //need its own router here that will return response packet, 
+        //if response packet has error flag, set response packet to be error stock response
+        //instatitae res = router.route(verb, path, params like body, headers, etc. w/e)
+        //if resp.status != OK, resp = Redirect
         if (path.compare(path.root_directory())) {
             try {
                 std::cout << "Not root" << std::endl;
@@ -120,7 +127,8 @@ protected:
             catch (const std::filesystem::filesystem_error& e) {
             
                 std::cout << "Thrown!" << resp.toString() << std::endl;
-                return getStockResponse(404).toString();
+                resp = getStockResponse(404);
+                return respond(resp).toString();
 			}
         }
         std::string dir = path.parent_path().string(); // "/home/dir1/dir2/dir3/dir4"
@@ -135,7 +143,7 @@ protected:
             if (dir == "/"  && file.length() == 0) {
                 file = "index.html";
                 std::ifstream t(file);
-                std::stringstream buffer;
+                std::stringstream buffer{};
                 buffer << t.rdbuf();
                 header contentLength = {"Content-Length", std::to_string(buffer.str().length())};
                 resp.headers.push_back({"Content-Type", "text/html"});
@@ -149,7 +157,7 @@ protected:
                 //create enum of mime struct later
                 std::string mime_type = getMIMEType(extension);
                 if (mime_type == "") {
-                    return getStockResponse(404).toString();
+                    return respond(resp = getStockResponse(404)).toString();
                 }
                 resp.headers.push_back({"Content-Type", mime_type});
                 std::stringstream buffer;

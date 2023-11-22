@@ -3,6 +3,7 @@
 #include <queue>
 #include <condition_variable>
 #include <functional>
+#include <thread>
 #define NUM_THREADS 4
 
 class ThreadPool {

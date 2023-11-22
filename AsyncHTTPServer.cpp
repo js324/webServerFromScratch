@@ -15,7 +15,7 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <string>
-#include <sys/epoll.h>
+#include <sys/epoll.h> //epoll linux kernel specific (could use kqueue)
 #include <fcntl.h>
 #define PORT "3490"  // the port users will be connecting to
 #define MAXDATASIZE 100
