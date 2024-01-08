@@ -109,7 +109,6 @@ protected:
         //TO DO: Better cleaning of path url (clean up /// slashes if inputted)
         if (path.compare(path.root_directory())) {
             try {
-                std::cout << "Not root" << std::endl;
                 auto relPath = std::filesystem::canonical(path.string().substr(1));
                 
                 if (relPath.empty() || relPath.string()[0] == '.' && relPath.string() != ".") {

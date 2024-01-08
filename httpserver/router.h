@@ -8,13 +8,12 @@
 #include "stock_response.h"
 class Router;
 
-class ExtensionInfo
+struct ExtensionInfo
 {
-public:
   std::string _contentType{};
   std::function<response(std::string, std::string, ExtensionInfo)> _loader{};
-  ExtensionInfo(std::string contentType, std::function<response(const Router&, std::string, std::string, ExtensionInfo)> loader): 
-    _contentType(contentType), _loader(std::move(loader)) {}
+//   ExtensionInfo(std::string contentType, std::function<response(std::string, std::string)> loader): 
+//     _contentType(contentType), _loader(loader) {} why constructor doesn't work? have no clue
 };
 
 
@@ -31,27 +30,51 @@ public:
 
 class Router {
 private:
+    static response PageLoader(std::string fullPath, std::string ext, ExtensionInfo extInfo)
+    {
+        response resp{};
+        std::ifstream t(fullPath);
+        std::stringstream buffer;
+        resp.headers.push_back({"Content-Type", extInfo._contentType});
+        header contentLength = {"Content-Length", std::to_string(buffer.str().length())};
+        resp.headers.push_back(contentLength);
+        resp.body = buffer.str();
+        return resp;
+    }
     static response ImageLoader(std::string fullPath, std::string ext, ExtensionInfo extInfo)
     {
-    // FileStream fStream = new FileStream(fullPath, FileMode.Open, FileAccess.Read);
-    // BinaryReader br = new BinaryReader(fStream);
-    // ResponsePacket ret = new ResponsePacket() { Data = br.ReadBytes((int)fStream.Length), ContentType = extInfo.ContentType };
-    // br.Close();
-    // fStream.Close();
-    response resp{};
-    return resp;
+        response resp{};
+        std::ifstream t(fullPath);
+        resp.headers.push_back({"Content-Type", extInfo._contentType});
+        std::stringstream buffer;
+        buffer << t.rdbuf();
+        header contentLength = {"Content-Length", std::to_string(buffer.str().length())};
+        resp.headers.push_back(contentLength);
+        resp.body = buffer.str();
+        return resp;
+    }
+    static response FileLoader(std::string fullPath, std::string ext, ExtensionInfo extInfo)
+    {
+        response resp{};
+        std::ifstream t(fullPath);
+        resp.headers.push_back({"Content-Type", extInfo._contentType});
+        std::stringstream buffer;
+        buffer << t.rdbuf();
+        header contentLength = {"Content-Length", std::to_string(buffer.str().length())};
+        resp.headers.push_back(contentLength);
+        resp.body = buffer.str();
+        return resp;
     }
 
+
     std::vector<Route> _routes{};
-    // public std::string WebsitePath { get; set; } prob don't need since we pass path relative to site
-    // std::function<response(std::string, std::string, ExtensionInfo)> loader {&ImageLoader};
-
-    // <int(A&)> f5 = &A::get;
     std::unordered_map<std::string, ExtensionInfo> _extFolderMap{
-        {"png", ExtensionInfo{"image/ico", std::bind(&(Router::ImageLoader))}}}
-
-
-    };
+        // {"png", ExtensionInfo{"image/ico", (Router::ImageLoader)}},
+        {"html", ExtensionInfo{"text/html", &(Router::PageLoader)}},
+        // {"css", ExtensionInfo{"text/css", (Router::FileLoader)}},
+        // {"js", ExtensionInfo{"text/js", (Router::FileLoader)}},
+    };    
+    
 
 public:
     void AddRoute(Route route) {
@@ -65,13 +88,11 @@ public:
         response resp{};
         std::string dir = path.parent_path().string(); // "/home/dir1/dir2/dir3/dir4"
         std::string file = path.filename().string(); // "file"
-        std::cout << "DIR: " << dir << "FILE: " << file;
+        // std::cout << "DIR: " << dir << "FILE: " << file;
         
-        resp.HTTP_version = "HTTP/1.1";
+        
         if (verb == "GET") {
-            resp.status_code = 200;
-            resp.reason = "OK";
-            
+
             resp.headers.push_back({"Connection", "close"});
             
             if (dir == "/html"  && file.length() == 0) {
@@ -83,25 +104,25 @@ public:
                 resp.headers.push_back({"Content-Type", "text/html"});
                 resp.headers.push_back(contentLength);
                 resp.body = buffer.str();
-                return resp;
+               
             } 
             else {
-                std::ifstream t(path.string().substr(1));
-                std::string extension = path.extension();
                 //create enum of mime struct later
-
+                std::string extension = path.extension().string().substr(1);
                 std::string mime_type = getMIMEType(extension);
+               
                 if (mime_type == "") {
                     return respond(resp = getStockResponse(ServerError::FileNotFound));
                 }
-                resp.headers.push_back({"Content-Type", mime_type});
-                std::stringstream buffer;
-                buffer << t.rdbuf();
-                header contentLength = {"Content-Length", std::to_string(buffer.str().length())};
-                resp.headers.push_back(contentLength);
-                resp.body = buffer.str();
-                return resp;
+                resp = _extFolderMap[extension]._loader(path.string().substr(1), extension, _extFolderMap[extension]);
+                // path.string(), extension, _extFolderMap[extension]._loader
+                
+                
             }
+            resp.status_code = 200;
+            resp.reason = "OK";
+            resp.HTTP_version = "HTTP/1.1";
+            return resp;
         }
     }
 };
