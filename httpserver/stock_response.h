@@ -20,6 +20,7 @@ struct response {
     std::vector<header> headers;
     std::string body;
     std::string redirect;
+    std::string encoding;
     std::string toString() {
         std::string res;
         res = HTTP_version + " " + std::to_string(status_code) + " " + reason + "\r\n"; //bad to append so many times (copies)
@@ -54,7 +55,7 @@ response getStockResponse(ServerError code) {
         case ServerError::FileNotFound:
         {
             resp.reason="Not Found";
-            resp.redirect = "stock_resps/notFound.html";
+            // resp.redirect = "stock_resps/notFound.html";
             return resp;
         }
         case ServerError::NotAuthorized:

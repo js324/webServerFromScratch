@@ -6,6 +6,9 @@
 #include <functional>
 #include "mime_types.h"
 #include "stock_response.h"
+
+inline const std::string ROOT_DIR = "/html";
+
 class Router;
 
 struct ExtensionInfo
@@ -32,14 +35,12 @@ class Router {
 private:
     static response PageLoader(std::string fullPath, std::string ext, ExtensionInfo extInfo)
     {
-        response resp{};
-        std::ifstream t(fullPath);
-        std::stringstream buffer;
-        resp.headers.push_back({"Content-Type", extInfo._contentType});
-        header contentLength = {"Content-Length", std::to_string(buffer.str().length())};
-        resp.headers.push_back(contentLength);
-        resp.body = buffer.str();
-        return resp;
+        if (fullPath == ROOT_DIR+"/") {
+            return FileLoader("html/index.html", ".html", ExtensionInfo{"text/html"});
+        }
+        else {
+            return FileLoader(fullPath, ext, extInfo);
+        }
     }
     static response ImageLoader(std::string fullPath, std::string ext, ExtensionInfo extInfo)
     {
@@ -51,28 +52,34 @@ private:
         header contentLength = {"Content-Length", std::to_string(buffer.str().length())};
         resp.headers.push_back(contentLength);
         resp.body = buffer.str();
+        
         return resp;
     }
     static response FileLoader(std::string fullPath, std::string ext, ExtensionInfo extInfo)
     {
         response resp{};
-        std::ifstream t(fullPath);
+        std::ifstream t(fullPath.substr(1));//has to remove first / to get relative 
         resp.headers.push_back({"Content-Type", extInfo._contentType});
         std::stringstream buffer;
         buffer << t.rdbuf();
         header contentLength = {"Content-Length", std::to_string(buffer.str().length())};
+        header charset = {"charset", "utf-8"};
+        resp.headers.push_back(charset);
         resp.headers.push_back(contentLength);
         resp.body = buffer.str();
+
         return resp;
     }
 
 
     std::vector<Route> _routes{};
     std::unordered_map<std::string, ExtensionInfo> _extFolderMap{
-        // {"png", ExtensionInfo{"image/ico", (Router::ImageLoader)}},
-        {"html", ExtensionInfo{"text/html", &(Router::PageLoader)}},
-        // {"css", ExtensionInfo{"text/css", (Router::FileLoader)}},
-        // {"js", ExtensionInfo{"text/js", (Router::FileLoader)}},
+        {".png", ExtensionInfo{"image/png", (Router::ImageLoader)}}, 
+        {".html", ExtensionInfo{"text/html", &(Router::PageLoader)}},
+        {"", ExtensionInfo{"text/html", &(Router::PageLoader)}},
+        {".css", ExtensionInfo{"text/css", (Router::FileLoader)}},
+        {".js", ExtensionInfo{"text/javascript", (Router::FileLoader)}},
+
     };    
     
 
@@ -86,43 +93,41 @@ public:
     std::filesystem::path path,
     std::map<std::string, std::string> kvParams) {
         response resp{};
-        std::string dir = path.parent_path().string(); // "/home/dir1/dir2/dir3/dir4"
-        std::string file = path.filename().string(); // "file"
-        // std::cout << "DIR: " << dir << "FILE: " << file;
-        
-        
-        if (verb == "GET") {
+        resp.HTTP_version = "HTTP/1.1";
+        path = ROOT_DIR + path.string();
 
-            resp.headers.push_back({"Connection", "close"});
-            
-            if (dir == "/html"  && file.length() == 0) {
-                file = "html/index.html";
-                std::ifstream t(file);
-                std::stringstream buffer{};
-                buffer << t.rdbuf();
-                header contentLength = {"Content-Length", std::to_string(buffer.str().length())};
-                resp.headers.push_back({"Content-Type", "text/html"});
-                resp.headers.push_back(contentLength);
-                resp.body = buffer.str();
-               
-            } 
-            else {
-                //create enum of mime struct later
-                std::string extension = path.extension().string().substr(1);
-                std::string mime_type = getMIMEType(extension);
-               
-                if (mime_type == "") {
-                    return respond(resp = getStockResponse(ServerError::FileNotFound));
+        if (path.compare(path.root_directory())) {
+            try { //really should avoid exceptions (why?)
+                auto relPath = std::filesystem::canonical(path.string().substr(1));
+                if (relPath.empty() || relPath.string()[0] == '.' && relPath.string() != ".") {
+                    std::cout << "NOT FOUND!" << std::endl;
+                    resp = getStockResponse(ServerError::FileNotFound);
+                    return resp;
                 }
-                resp = _extFolderMap[extension]._loader(path.string().substr(1), extension, _extFolderMap[extension]);
-                // path.string(), extension, _extFolderMap[extension]._loader
-                
-                
             }
-            resp.status_code = 200;
-            resp.reason = "OK";
-            resp.HTTP_version = "HTTP/1.1";
-            return resp;
+            catch (const std::filesystem::filesystem_error& e) {
+            
+                std::cout << "Thrown!" << resp.toString() << std::endl;
+                resp = getStockResponse(ServerError::FileNotFound);
+                resp.status_code = 404;
+                return resp;
+			}
         }
+        //TO DO: Better cleaning of path url (clean up /// slashes if inputted)
+        
+
+        if (verb == "GET") {
+            resp.headers.push_back({"Connection", "close"});
+            std::string extension = path.extension().string();
+            // std::string mime_type = getMIMEType(extension); //either keep the getmimetype or get rid of extensioninfo, probably get rid of extension info
+            std::cout << "PATH: " << path.string() << " extension: " << extension << std::endl;
+            resp = _extFolderMap[extension]._loader(path.string(), extension, _extFolderMap[extension]);        
+                
+        }
+        std::cout << "RETURNING!" << std::endl;
+        resp.status_code = 200;
+        resp.reason = "OK";
+        return resp;
     }
 };
+

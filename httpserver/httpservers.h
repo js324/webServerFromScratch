@@ -98,35 +98,17 @@ protected:
             prev = pos+2;
         }
         
-        //probably should make where it ("html") more customizable
-        auto path = std::filesystem::path("/html" + reqParsed.URI);
+        auto path = std::filesystem::path(reqParsed.URI);
         std::cout << "Path:" << reqParsed.URI << std::endl; 
         //need its own router here that will return response packet, 
         //if response packet has error flag, set response packet to be error stock response
         //instatitae res = router.route(verb, path, params like body, headers, etc. w/e)
         //if resp.status != OK, resp = Redirect
         
-        //TO DO: Better cleaning of path url (clean up /// slashes if inputted)
-        if (path.compare(path.root_directory())) {
-            try {
-                auto relPath = std::filesystem::canonical(path.string().substr(1));
-                
-                if (relPath.empty() || relPath.string()[0] == '.' && relPath.string() != ".") {
-                    
-                    std::cout << "404" << std::endl;
-                    return "404";
-                }
-            }
-            catch (const std::filesystem::filesystem_error& e) {
-            
-                std::cout << "Thrown!" << resp.toString() << std::endl;
-                resp = getStockResponse(ServerError::FileNotFound);
-                return respond(resp).toString();
-			}
-        }
+        
         std::string dir = path.parent_path().string(); // "/home/dir1/dir2/dir3/dir4"
         std::string file = path.filename().string(); // "file"
-        std::cout << "DIR: " << dir << "FILE: " << file;
+        std::cout << "DIR: " << dir << "FILE: " << file << std::endl;
         //get canonical make sure, it matches to current (doesn't break out)
         resp = router.route(reqParsed.method, path, {});
         return resp.toString();
