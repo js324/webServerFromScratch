@@ -14,7 +14,7 @@ enum class ServerError
 };
 
 struct response {
-    std::string HTTP_version;
+    std::string HTTP_version = "HTTP/1.1";
     int status_code;
     std::string reason;
     std::vector<header> headers;
@@ -55,7 +55,9 @@ response getStockResponse(ServerError code) {
         case ServerError::FileNotFound:
         {
             resp.reason="Not Found";
-            // resp.redirect = "stock_resps/notFound.html";
+            // resp.status_code = 404;
+
+            resp.redirect = "stock_resps/notFound.html";
             return resp;
         }
         case ServerError::NotAuthorized:

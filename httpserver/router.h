@@ -33,10 +33,22 @@ public:
 
 class Router {
 private:
+    bool verifyPath(std::filesystem::path path) {
+        
+        if (path.compare(path.root_directory())) {
+            try { //really should avoid exceptions (why?)
+                auto relPath = std::filesystem::canonical(path.string().substr(1));
+                return !(relPath.empty() || relPath.string()[0] == '.' && relPath.string() != ".");
+            }
+            catch (const std::filesystem::filesystem_error& e) {
+                return false;
+			}
+        }
+    }
     static response PageLoader(std::string fullPath, std::string ext, ExtensionInfo extInfo)
     {
         if (fullPath == ROOT_DIR+"/") {
-            return FileLoader("html/index.html", ".html", ExtensionInfo{"text/html"});
+            return FileLoader("/html/index.html", ".html", ExtensionInfo{"text/html"});
         }
         else {
             return FileLoader(fullPath, ext, extInfo);
@@ -58,6 +70,7 @@ private:
     static response FileLoader(std::string fullPath, std::string ext, ExtensionInfo extInfo)
     {
         response resp{};
+
         std::ifstream t(fullPath.substr(1));//has to remove first / to get relative 
         resp.headers.push_back({"Content-Type", extInfo._contentType});
         std::stringstream buffer;
@@ -67,7 +80,6 @@ private:
         resp.headers.push_back(charset);
         resp.headers.push_back(contentLength);
         resp.body = buffer.str();
-
         return resp;
     }
 
@@ -76,7 +88,6 @@ private:
     std::unordered_map<std::string, ExtensionInfo> _extFolderMap{
         {".png", ExtensionInfo{"image/png", (Router::ImageLoader)}}, 
         {".html", ExtensionInfo{"text/html", &(Router::PageLoader)}},
-        {"", ExtensionInfo{"text/html", &(Router::PageLoader)}},
         {".css", ExtensionInfo{"text/css", (Router::FileLoader)}},
         {".js", ExtensionInfo{"text/javascript", (Router::FileLoader)}},
 
@@ -93,26 +104,10 @@ public:
     std::filesystem::path path,
     std::map<std::string, std::string> kvParams) {
         response resp{};
-        resp.HTTP_version = "HTTP/1.1";
+        
         path = ROOT_DIR + path.string();
 
-        if (path.compare(path.root_directory())) {
-            try { //really should avoid exceptions (why?)
-                auto relPath = std::filesystem::canonical(path.string().substr(1));
-                if (relPath.empty() || relPath.string()[0] == '.' && relPath.string() != ".") {
-                    std::cout << "NOT FOUND!" << std::endl;
-                    resp = getStockResponse(ServerError::FileNotFound);
-                    return resp;
-                }
-            }
-            catch (const std::filesystem::filesystem_error& e) {
-            
-                std::cout << "Thrown!" << resp.toString() << std::endl;
-                resp = getStockResponse(ServerError::FileNotFound);
-                resp.status_code = 404;
-                return resp;
-			}
-        }
+        
         //TO DO: Better cleaning of path url (clean up /// slashes if inputted)
         
 
@@ -121,7 +116,19 @@ public:
             std::string extension = path.extension().string();
             // std::string mime_type = getMIMEType(extension); //either keep the getmimetype or get rid of extensioninfo, probably get rid of extension info
             std::cout << "PATH: " << path.string() << " extension: " << extension << std::endl;
-            resp = _extFolderMap[extension]._loader(path.string(), extension, _extFolderMap[extension]);        
+            if (extension == "") {
+                extension = ".html";
+                path = path.string() + extension; 
+            }
+            if (verifyPath(path)) {
+                resp = _extFolderMap[extension]._loader(path.string(), extension, _extFolderMap[extension]);   
+            }
+            else {
+                resp = getStockResponse(ServerError::FileNotFound);
+                return respond(resp);
+            }
+
+     
                 
         }
         std::cout << "RETURNING!" << std::endl;
