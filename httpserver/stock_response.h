@@ -10,7 +10,7 @@ enum class ServerError
   NotAuthorized = 401,
   FileNotFound = 404,
   InternalServerError = 500,
-  UnknownType,
+  BadRequest = 400,
 };
 
 struct response {

@@ -4,6 +4,7 @@
 #include <map>
 #include <iostream>
 #include <functional>
+#include <locale>
 #include "mime_types.h"
 #include "stock_response.h"
 
@@ -38,16 +39,18 @@ private:
         if (path.compare(path.root_directory())) {
             try { //really should avoid exceptions (why?)
                 auto relPath = std::filesystem::canonical(path.string().substr(1));
-                return !(relPath.empty() || relPath.string()[0] == '.' && relPath.string() != ".");
+                return !(relPath.empty() || (relPath.string()[0] == '.' && relPath.string() != "."));
             }
             catch (const std::filesystem::filesystem_error& e) {
                 return false;
 			}
         }
+        return false;
     }
     static response PageLoader(std::string fullPath, std::string ext, ExtensionInfo extInfo)
     {
-        if (fullPath == ROOT_DIR+"/") {
+        if (fullPath == "/") {
+            std::cout << "test";
             return FileLoader("/html/index.html", ".html", ExtensionInfo{"text/html"});
         }
         else {
@@ -57,14 +60,15 @@ private:
     static response ImageLoader(std::string fullPath, std::string ext, ExtensionInfo extInfo)
     {
         response resp{};
-        std::ifstream t(fullPath);
+
+        std::ifstream t(fullPath.substr(1));//has to remove first / to get relative 
         resp.headers.push_back({"Content-Type", extInfo._contentType});
         std::stringstream buffer;
         buffer << t.rdbuf();
         header contentLength = {"Content-Length", std::to_string(buffer.str().length())};
+        
         resp.headers.push_back(contentLength);
         resp.body = buffer.str();
-        
         return resp;
     }
     static response FileLoader(std::string fullPath, std::string ext, ExtensionInfo extInfo)
@@ -88,6 +92,7 @@ private:
     std::unordered_map<std::string, ExtensionInfo> _extFolderMap{
         {".png", ExtensionInfo{"image/png", (Router::ImageLoader)}}, 
         {".html", ExtensionInfo{"text/html", &(Router::PageLoader)}},
+        {"", ExtensionInfo{"text/html", &(Router::PageLoader)}},
         {".css", ExtensionInfo{"text/css", (Router::FileLoader)}},
         {".js", ExtensionInfo{"text/javascript", (Router::FileLoader)}},
 
@@ -100,36 +105,53 @@ public:
     }
 
 
-    response route(std::string_view verb,
+    response route(std::string verb,
     std::filesystem::path path,
     std::map<std::string, std::string> kvParams) {
         response resp{};
         
-        path = ROOT_DIR + path.string();
-
         
         //TO DO: Better cleaning of path url (clean up /// slashes if inputted)
         
-
-        if (verb == "GET") {
+        auto routeIt = std::find_if(_routes.begin(), _routes.end(), [&verb, &path](Route route) { 
+            for (auto& c : verb) {
+                c = std::tolower(c);
+            }
+            return route._verb == verb && route._path == path; 
+        });
+        if (_routes.end() != routeIt) { 
             resp.headers.push_back({"Connection", "close"});
             std::string extension = path.extension().string();
             // std::string mime_type = getMIMEType(extension); //either keep the getmimetype or get rid of extensioninfo, probably get rid of extension info
             std::cout << "PATH: " << path.string() << " extension: " << extension << std::endl;
-            if (extension == "") {
-                extension = ".html";
-                path = path.string() + extension; 
-            }
-            if (verifyPath(path)) {
-                resp = _extFolderMap[extension]._loader(path.string(), extension, _extFolderMap[extension]);   
+            ExtensionInfo extInfo = _extFolderMap[extension];
+            if (path.string() == "/") { //ugly way to handle case of hitting root of site
+                resp = extInfo._loader(path.string(), extension, extInfo);  
             }
             else {
-                resp = getStockResponse(ServerError::FileNotFound);
-                return respond(resp);
+                if (extension == "") { //edge case where there is no extension given, default to html
+                    extension = ".html";
+                    path = path.string() + extension; 
+                }
+                if (verifyPath(ROOT_DIR+path.string())) {
+                    resp = extInfo._loader(ROOT_DIR+path.string(), extension, extInfo);
+                }
+                else {
+                    resp = getStockResponse(ServerError::FileNotFound);
+                    return respond(resp);
+                }
             }
+            // else {
+            //     resp = getStockResponse(ServerError::InternalServerError);
 
-     
+            // }
+
+    
                 
+        }
+        else {
+            resp = getStockResponse(ServerError::InternalServerError);
+            return respond(resp);
         }
         std::cout << "RETURNING!" << std::endl;
         resp.status_code = 200;
