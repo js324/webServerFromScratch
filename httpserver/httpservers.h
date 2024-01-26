@@ -20,10 +20,19 @@ struct request {
 };
 
 class TCPServer {
+
+public:
+    TCPServer(std::string ip, int port): m_ip {ip}, m_port{port}{};
+    virtual void runServer() = 0;//will be inherited, then have event loop
+    virtual void closeServer() = 0;//virtual good, bad?
+    void AddRoute(Route route) {
+        _router.AddRoute(route);
+    }
+    virtual ~TCPServer() = default;
 private:
     std::string m_ip;
     int m_port;    
-    Router router{};
+    Router _router{};
     // void sigchld_handler(int s)
     // {
     //     (void)s; // quiet unused variable warning
@@ -110,8 +119,9 @@ protected:
         std::string file = path.filename().string(); // "file"
         std::cout << "DIR: " << dir << "FILE: " << file << std::endl;
         //get canonical make sure, it matches to current (doesn't break out)
-        resp = router.route(reqParsed.method, path, {});
-        return resp.toString();
+        resp = _router.route(reqParsed.method, path, {});
+      
+        return respond(resp).toString();
     }
     int bindAndListen() {
         int sockfd, new_fd;  // listen on sock_fd, new connection on new_fd
@@ -169,9 +179,4 @@ protected:
         
         return sockfd;
     }
-public:
-    TCPServer(std::string ip, int port): m_ip {ip}, m_port{port}{};
-    virtual void runServer() = 0;//will be inherited, then have event loop
-    virtual void closeServer() = 0;//virtual good, bad?
-    virtual ~TCPServer() = default;
 };

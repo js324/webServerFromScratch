@@ -25,7 +25,9 @@ class Route {
 public:
     std::string_view _verb;
     std::filesystem::path _path; 
-    std::map<std::string, std::string> _kvParams;
+    std::map<std::string, std::string> _kvParams{};
+    std::function<std::string(std::map<std::string, std::string>)> Action{};
+    Route(std::string_view verb, std::filesystem::path path): _verb {verb}, _path {path} { }
     Route(std::string_view verb, std::filesystem::path path, std::map<std::string, std::string> kvParams): 
         _verb {verb}, _path {path}, _kvParams {kvParams}  {
     }    
@@ -119,13 +121,22 @@ public:
             }
             return route._verb == verb && route._path == path; 
         });
+        // std::cout << "Found route!" << std::endl;
+        //possibly outside check to see if extension is valid (but right now we would default to .html)
         if (_routes.end() != routeIt) { 
+           
+            Route route = *routeIt;
             resp.headers.push_back({"Connection", "close"});
             std::string extension = path.extension().string();
             // std::string mime_type = getMIMEType(extension); //either keep the getmimetype or get rid of extensioninfo, probably get rid of extension info
             std::cout << "PATH: " << path.string() << " extension: " << extension << std::endl;
             ExtensionInfo extInfo = _extFolderMap[extension];
-            if (path.string() == "/") { //ugly way to handle case of hitting root of site
+            std::string redirect = route.Action ? route.Action(kvParams) : "";
+            // std::cout << "Found route!" << std::endl;
+            if (redirect.length()) {
+                resp.redirect = redirect;
+            }
+            else if (path.string() == "/") { //ugly way to handle case of hitting root of site
                 resp = extInfo._loader(path.string(), extension, extInfo);  
             }
             else {
@@ -133,12 +144,14 @@ public:
                     extension = ".html";
                     path = path.string() + extension; 
                 }
+                 std::cout << "Found route!" << std::endl;
                 if (verifyPath(ROOT_DIR+path.string())) {
+                    
                     resp = extInfo._loader(ROOT_DIR+path.string(), extension, extInfo);
                 }
                 else {
                     resp = getStockResponse(ServerError::FileNotFound);
-                    return respond(resp);
+                    return resp;
                 }
             }
             // else {
@@ -151,7 +164,7 @@ public:
         }
         else {
             resp = getStockResponse(ServerError::InternalServerError);
-            return respond(resp);
+            return resp;
         }
         std::cout << "RETURNING!" << std::endl;
         resp.status_code = 200;

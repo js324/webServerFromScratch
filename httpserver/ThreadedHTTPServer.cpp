@@ -24,7 +24,7 @@
 
 
 
-class ThreadedHTTPServer: TCPServer {
+class ThreadedHTTPServer: public TCPServer {
 private:
 	ThreadPool pool;
 	void serve_connection(int fd) {
@@ -86,10 +86,15 @@ public:
 	void closeServer() {
 		pool.close();
 	}
+	// void AddRoute(Route route) {
+    //     router.AddRoute(route);
+    // }
 };
 int main(void)
 {
 	ThreadedHTTPServer server("localhost", 3490);
+	// server.hello();
+	server.AddRoute({"get", "/index.html"});
 	server.runServer();	
 	
 
