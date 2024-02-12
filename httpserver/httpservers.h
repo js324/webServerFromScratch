@@ -23,12 +23,21 @@ class TCPServer {
 
 public:
     TCPServer(std::string ip, int port): m_ip {ip}, m_port{port}{};
-    virtual void runServer() = 0;//will be inherited, then have event loop
+    virtual void startConnectionHandler() = 0;
+    void runServer(std::string websitePath) {
+        _router.SetWebsitePath(websitePath);
+        startConnectionHandler();
+        
+    }
     virtual void closeServer() = 0;//virtual good, bad?
     void AddRoute(Route route) {
         _router.AddRoute(route);
     }
     virtual ~TCPServer() = default;
+
+    void onError(std::function<std::string(HTTPStatusCode)> onError) {
+        _router.onError(onError);
+    }
 private:
     std::string m_ip;
     int m_port;    
@@ -108,7 +117,6 @@ protected:
         }
         
         auto path = std::filesystem::path(reqParsed.URI);
-        std::cout << "Path:" << reqParsed.URI << std::endl; 
         //need its own router here that will return response packet, 
         //if response packet has error flag, set response packet to be error stock response
         //instatitae res = router.route(verb, path, params like body, headers, etc. w/e)
@@ -117,9 +125,8 @@ protected:
         
         std::string dir = path.parent_path().string(); // "/home/dir1/dir2/dir3/dir4"
         std::string file = path.filename().string(); // "file"
-        std::cout << "DIR: " << dir << "FILE: " << file << std::endl;
         //get canonical make sure, it matches to current (doesn't break out)
-        resp = _router.route(reqParsed.method, path, {});
+        resp = _router.RouteReq(reqParsed.method, path, {});
       
         return respond(resp).toString();
     }

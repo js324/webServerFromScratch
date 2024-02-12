@@ -8,7 +8,6 @@
 #include "mime_types.h"
 #include "stock_response.h"
 
-inline const std::string ROOT_DIR = "/html";
 
 class Router;
 
@@ -25,17 +24,18 @@ class Route {
 public:
     std::string_view _verb;
     std::filesystem::path _path; 
-    std::map<std::string, std::string> _kvParams{};
-    std::function<std::string(std::map<std::string, std::string>)> Action{};
+    std::function<std::string(std::map<std::string, std::string>)> _action{};
     Route(std::string_view verb, std::filesystem::path path): _verb {verb}, _path {path} { }
-    Route(std::string_view verb, std::filesystem::path path, std::map<std::string, std::string> kvParams): 
-        _verb {verb}, _path {path}, _kvParams {kvParams}  {
+    Route(std::string_view verb, std::filesystem::path path, std::function<std::string(std::map<std::string, std::string>)> action): 
+        _verb {verb}, _path {path}, _action {action}  {
     }    
 };
 
 
 class Router {
 private:
+    std::string _websitePath{};
+    std::function<std::string(HTTPStatusCode)> _onError;
     bool verifyPath(std::filesystem::path path) {
         
         if (path.compare(path.root_directory())) {
@@ -102,17 +102,27 @@ private:
     
 
 public:
+    void onError(std::function<std::string(HTTPStatusCode)> onError) {
+        _onError = onError;
+    }
     void AddRoute(Route route) {
         _routes.push_back(route);
     }
+    std::string GetWebsitePath() {
+        return _websitePath;
+    }
+    void SetWebsitePath(std::string websitePath) {
+        _websitePath = websitePath;
+    }
 
-
-    response route(std::string verb,
+    response RouteReq(std::string verb,
     std::filesystem::path path,
     std::map<std::string, std::string> kvParams) {
         response resp{};
-        
-        
+        resp.headers.push_back({"Connection", "close"});
+        std::string extension = path.extension().string();
+        // std::string mime_type = getMIMEType(extension); //either keep the getmimetype or get rid of extensioninfo, probably get rid of extension info
+
         //TO DO: Better cleaning of path url (clean up /// slashes if inputted)
         
         auto routeIt = std::find_if(_routes.begin(), _routes.end(), [&verb, &path](Route route) { 
@@ -123,52 +133,48 @@ public:
         });
         // std::cout << "Found route!" << std::endl;
         //possibly outside check to see if extension is valid (but right now we would default to .html)
-        if (_routes.end() != routeIt) { 
-           
-            Route route = *routeIt;
-            resp.headers.push_back({"Connection", "close"});
-            std::string extension = path.extension().string();
-            // std::string mime_type = getMIMEType(extension); //either keep the getmimetype or get rid of extensioninfo, probably get rid of extension info
-            std::cout << "PATH: " << path.string() << " extension: " << extension << std::endl;
+        if (_extFolderMap.contains(extension)) {
             ExtensionInfo extInfo = _extFolderMap[extension];
-            std::string redirect = route.Action ? route.Action(kvParams) : "";
-            // std::cout << "Found route!" << std::endl;
-            if (redirect.length()) {
-                resp.redirect = redirect;
-            }
-            else if (path.string() == "/") { //ugly way to handle case of hitting root of site
-                resp = extInfo._loader(path.string(), extension, extInfo);  
-            }
-            else {
-                if (extension == "") { //edge case where there is no extension given, default to html
-                    extension = ".html";
-                    path = path.string() + extension; 
-                }
-                 std::cout << "Found route!" << std::endl;
-                if (verifyPath(ROOT_DIR+path.string())) {
-                    
-                    resp = extInfo._loader(ROOT_DIR+path.string(), extension, extInfo);
+            if (_routes.end() != routeIt) { 
+                Route route = *routeIt;
+                std::string redirect = route._action ? route._action(kvParams) : "";
+                // std::cout << "Found route!" << std::endl;
+                if (redirect.length()) {
+                    resp.redirect = redirect;
                 }
                 else {
-                    resp = getStockResponse(ServerError::FileNotFound);
-                    return resp;
-                }
+                    if (extension == "") { //edge case where there is no extension given, default to html
+                        extension = ".html";
+                        path = path.string() + extension; 
+                    }
+                    std::cout << "Found route!" << std::endl;
+                    if (verifyPath(_websitePath+path.string())) {
+                        resp = extInfo._loader(_websitePath+path.string(), extension, extInfo);
+                    }
+                    else {
+                        resp = RouteReq("get", _onError(HTTPStatusCode::FileNotFound), {});
+                        resp.error = HTTPStatusCode::FileNotFound;
+                        return resp;
+                    }
+                }   
             }
-            // else {
-            //     resp = getStockResponse(ServerError::InternalServerError);
-
-            // }
-
-    
-                
+            else if (verifyPath(_websitePath+path.string())) {
+                resp = extInfo._loader(_websitePath+path.string(), extension, extInfo);
+                return resp;
+            }
+            else {
+                std::cout << "Error Thrown: No valid route or file found" << std::endl;
+                resp = RouteReq("get", _onError(HTTPStatusCode::FileNotFound), {});
+                resp.error = HTTPStatusCode::FileNotFound;
+                return resp;
+            }
         }
         else {
-            resp = getStockResponse(ServerError::InternalServerError);
+            std::cout << "Error Thrown: No valid extension" << std::endl;
+            resp = RouteReq("get", _onError(HTTPStatusCode::FileNotFound), {});
+            resp.error = HTTPStatusCode::FileNotFound;
             return resp;
         }
-        std::cout << "RETURNING!" << std::endl;
-        resp.status_code = 200;
-        resp.reason = "OK";
         return resp;
     }
 };
