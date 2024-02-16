@@ -119,7 +119,6 @@ public:
     std::filesystem::path path,
     std::map<std::string, std::string> kvParams) {
         response resp{};
-        resp.headers.push_back({"Connection", "close"});
         std::string extension = path.extension().string();
         // std::string mime_type = getMIMEType(extension); //either keep the getmimetype or get rid of extensioninfo, probably get rid of extension info
 
@@ -138,9 +137,10 @@ public:
             if (_routes.end() != routeIt) { 
                 Route route = *routeIt;
                 std::string redirect = route._action ? route._action(kvParams) : "";
-                // std::cout << "Found route!" << std::endl;
+                std::cout << "redict: " << redirect << std::endl;
                 if (redirect.length()) {
                     resp.redirect = redirect;
+                    return resp;
                 }
                 else {
                     if (extension == "") { //edge case where there is no extension given, default to html

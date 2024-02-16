@@ -52,5 +52,6 @@ response respond(response& resp) {
         resp.status_code = (int) HTTPStatusCode::OK;
         resp.reason = "OK";
     }
+    std::cout << resp.toString() << std::endl;
     return resp;
 }

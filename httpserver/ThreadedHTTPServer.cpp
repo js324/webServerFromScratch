@@ -24,7 +24,7 @@
 
 
 
-class ThreadedHTTPServer: public TCPServer {
+class ThreadedHTTPServer: public HTTPServer::TCPServer {
 private:
 	ThreadPool pool;
 	void serve_connection(int fd) {
@@ -34,18 +34,23 @@ private:
 			try {
 				char buf[MAXDATASIZE];
 				int numbytes;
-				
+				//handle partial reads if too big 
 				if ((numbytes = recv(fd, buf, MAXDATASIZE-1, 0)) == -1) {
 					perror("recv");
 					throw;
 				}
+				
 				buf[numbytes] = '\0';
 				if (numbytes == 0) {
 					std::cout << "Connection closed!\n";
 					return;
 				}
-				std::string resp = serve_request(std::string(buf, numbytes));
-				//handle partial sends
+				std::string req = std::string(buf, numbytes);
+				std::cout << "req: " << req << std::endl;
+				std::string resp = serve_request(req);
+				//still need to handle partial sends
+
+				std::cout << numbytes << std::endl;
 				if (send(fd, &resp[0], resp.length(), 0) == -1) {
 					perror("send");
 					throw;

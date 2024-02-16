@@ -10,6 +10,7 @@
 #define PORT "3490"  // the port users will be connecting to
 #define BACKLOG 10	 // how many pending connections queue will hold
 
+namespace HTTPServer {
 struct request {
     std::string method;
     std::string URI;
@@ -127,7 +128,7 @@ protected:
         std::string file = path.filename().string(); // "file"
         //get canonical make sure, it matches to current (doesn't break out)
         resp = _router.RouteReq(reqParsed.method, path, {});
-      
+        
         return respond(resp).toString();
     }
     int bindAndListen() {
@@ -187,3 +188,4 @@ protected:
         return sockfd;
     }
 };
+}
