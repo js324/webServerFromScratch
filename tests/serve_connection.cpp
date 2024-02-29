@@ -1,19 +1,4 @@
-#include <iostream>
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <errno.h>
-#include <string.h>
-#include <sys/types.h>
-#include <sys/socket.h>
-#include <netinet/in.h>
-#include <netdb.h>
-#include <arpa/inet.h>
-#include <sys/wait.h>
-#include <signal.h>
-#include <string>
-#include <thread>
-#include "../httpserver/httpservers.h"
+#include "../httpserver/threaded_server.h"
 
 
 
@@ -22,5 +7,7 @@
 int main() {
     std::string req = "test";
     std::string resp = HTTPServer::serve_request(req);  
-
+    ThreadedHTTPServer server("localhost", 3490);
+	std::string websitePath = "/html";
+    server.AddRoute({"get", "/index.html"});   
 }

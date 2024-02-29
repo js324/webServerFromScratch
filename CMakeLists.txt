@@ -9,8 +9,6 @@ set(CMAKE_CXX_CLANG_TIDY
   -use-color;)
 add_executable(${PROJECT_NAME} httpserver/ThreadedHTTPServer.cpp)
 target_include_directories(${PROJECT_NAME} PUBLIC httpserver PUBLIC httpserver/html/stock_resps)
-#INTERFACE adds httpserver folder to interface_include directories, when this (a library) is linked to a target, cmake will search through these dirs to see build properties
-#PRIVATE adds to include 
 #should later do add_library intead of add_executable
 
 install (TARGETS WSS DESTINATION bin)
