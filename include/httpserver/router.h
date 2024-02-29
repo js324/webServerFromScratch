@@ -137,7 +137,6 @@ public:
             if (_routes.end() != routeIt) { 
                 Route route = *routeIt;
                 std::string redirect = route._action ? route._action(kvParams) : "";
-                std::cout << "redict: " << redirect << std::endl;
                 if (redirect.length()) {
                     resp.redirect = redirect;
                     return resp;
@@ -147,11 +146,12 @@ public:
                         extension = ".html";
                         path = path.string() + extension; 
                     }
-                    std::cout << "Found route!" << std::endl;
+                    
                     if (verifyPath(_websitePath+path.string())) {
                         resp = extInfo._loader(_websitePath+path.string(), extension, extInfo);
                     }
                     else {
+                        std::cout << "Couldn't verify path: " << _websitePath+path.string() << std::endl;
                         resp = RouteReq("get", _onError(HTTPStatusCode::FileNotFound), {});
                         resp.error = HTTPStatusCode::FileNotFound;
                         return resp;
