@@ -7,6 +7,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 #  -header-filter=.
 #  -checks=*
 #  -use-color;)
-add_executable(${PROJECT_NAME} serve_connection.cpp)
+
+# possibly need to add gcc flags? 
+
+add_executable(${PROJECT_NAME} serve_connection.cpp client.cpp request.txt)
 target_link_libraries(${PROJECT_NAME} PUBLIC WSS) 
 install (TARGETS ${PROJECT_NAME} DESTINATION bin)

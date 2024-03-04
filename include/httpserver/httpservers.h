@@ -77,6 +77,7 @@ protected:
         std::string delimiter = "\r\n";
         request reqParsed{};
         int first_time = 1;
+        //should still fix parsing, should error if its not well formed http req
         while ((pos = req.find(delimiter, prev)) != std::string::npos) {
             size_t linePos{};
             size_t linePrev{};

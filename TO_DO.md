@@ -7,7 +7,5 @@
           - Focus on HTTP functionality like pipelining, parsing headers, etc.
      - Profile/Benchmark it still
      - Start creating tests w/ sanitizers 
-     - Make it header only library
-     - Update CMake files
      - Do clang tidy and format as custom commands
 

@@ -14,17 +14,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED True)
 add_library(WSS INTERFACE)
 target_include_directories(WSS INTERFACE $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}/include>
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>) 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED True)
-# set(CMAKE_CXX_CLANG_TIDY 
-#  clang-tidy
-#  -header-filter=.
-#  -checks=*
-#  -use-color;)
 
 add_subdirectory("tests")
 
 #if (ENABLE_TESTING)
 #    enable_testing()
-    
 #endif()
