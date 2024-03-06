@@ -43,7 +43,7 @@ int main(void)
 
 
 	server.AddRoute({"get", "/index.html"});
-	server.AddRoute({"get", "/", [] (std::map<std::string, std::string>) { return "/index.html"; }});
+	server.AddRoute({"get", "/test", [] (std::map<std::string, std::string>) { return "/index.html"; }});
 	server.AddRoute({"post", "/demo/redirect", [] (std::map<std::string, std::string>) { return "/stock_resps/forbidden.html"; }});
 	
 	server.onError(&ErrorHandler);

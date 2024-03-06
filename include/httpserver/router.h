@@ -49,6 +49,16 @@ private:
         }
         return false;
     }
+    static response CustomResponse(std::string actionRes) {
+        response resp{};
+        resp.headers.push_back({"Content-Type", "application/json"});
+        header contentLength = {"Content-Length", std::to_string(actionRes.length())};
+        
+        resp.headers.push_back(contentLength);
+        resp.body = actionRes;
+        return resp;
+
+    }
     static response PageLoader(std::string fullPath, std::string ext, ExtensionInfo extInfo)
     {
         if (fullPath == "/") {
@@ -136,9 +146,11 @@ public:
             ExtensionInfo extInfo = _extFolderMap[extension];
             if (_routes.end() != routeIt) { 
                 Route route = *routeIt;
-                std::string redirect = route._action ? route._action(kvParams) : "";
-                if (redirect.length()) {
-                    resp.redirect = redirect;
+                std::string actionRes = route._action ? route._action(kvParams) : "";
+
+                if (actionRes.size()) {
+                    std::cout << "testing!!" << std::endl;
+                    resp = CustomResponse(actionRes);
                     return resp;
                 }
                 else {

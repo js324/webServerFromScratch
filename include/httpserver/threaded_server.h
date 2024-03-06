@@ -43,7 +43,6 @@ private:
 					return;
 				}
 				std::string req = std::string(buf, numbytes);
-				std::cout << "req: " << req << std::endl;
 				std::string resp = serve_request(req);
 				//still need to handle partial sends
 
