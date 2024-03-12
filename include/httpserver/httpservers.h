@@ -65,7 +65,7 @@ private:
 
         return &(((struct sockaddr_in6*)sa)->sin6_addr);
     }
-protected:
+public:
     
     std::string serve_request(std::string req) {
         

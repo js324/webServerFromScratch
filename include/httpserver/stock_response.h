@@ -15,7 +15,7 @@ enum class HTTPStatusCode
 };
 
 struct response {
-    std::string HTTP_version = "HTTP/1.1";
+    std::string HTTP_version = "HTTP/1.0";
     std::string reason;
     std::vector<header> headers;
     std::string body;

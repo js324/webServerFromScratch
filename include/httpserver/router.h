@@ -34,7 +34,7 @@ public:
 
 class Router {
 private:
-    std::string _websitePath{};
+    std::string _websitePath{"/html"};
     std::function<std::string(HTTPStatusCode)> _onError;
     bool verifyPath(std::filesystem::path path) {
         
