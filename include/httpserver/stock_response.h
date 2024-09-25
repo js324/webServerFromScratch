@@ -1,7 +1,7 @@
 #pragma once
 #include "header.h"
 #include <string>
-
+#include <vector>
 
 enum class HTTPStatusCode
 {

@@ -7,18 +7,17 @@
 #include "header.h"
 #include "mime_types.h"
 #include "router.h"
+#include "http_parser.h"
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <cstring>
+#include <netdb.h>
+#include <signal.h>
 #define PORT "3490"  // the port users will be connecting to
 #define BACKLOG 10	 // how many pending connections queue will hold
 
 namespace HTTPServer {
-struct request {
-    std::string method;
-    std::string URI;
-    std::vector<header> headers;
-    std::string body;
-    std::string reqUrl;
-    std::string userHostAddress;
-};
 
 class TCPServer {
 
@@ -41,20 +40,8 @@ public:
     }
 private:
     std::string m_ip;
-    int m_port;    
+    int m_port;   
     Router _router{};
-    // void sigchld_handler(int s)
-    // {
-    //     (void)s; // quiet unused variable warning
-
-    //     // waitpid() might overwrite errno, so we save and restore it:
-    //     int saved_errno = errno;
-
-    //     while(waitpid(-1, NULL, WNOHANG) > 0);
-
-    //     errno = saved_errno;
-    // }
-
 
     // get sockaddr, IPv4 or IPv6:
     void *get_in_addr(struct sockaddr *sa)
@@ -69,55 +56,7 @@ public:
     
     std::string serve_request(std::string req) {
         
-        size_t pos = 0;
-        
-        size_t prev = 0;
-        std::string token;
-        response resp;
-        std::string delimiter = "\r\n";
-        request reqParsed{};
-        int first_time = 1;
-        //should still fix parsing, should error if its not well formed http req
-        while ((pos = req.find(delimiter, prev)) != std::string::npos) {
-            size_t linePos{};
-            size_t linePrev{};
-            token = req.substr(prev, pos-prev);
-            
-            std::string word{};
-            while ((linePos = token.find(" ", linePrev)) != std::string::npos) {
-                if (first_time) {
-                     //loop unroll
-                    word = token.substr(linePrev, linePos-linePrev);
-                    reqParsed.method = word;
-                    linePrev = linePos+1;
-                    linePos = token.find(" ", linePrev);
-                    word = token.substr(linePrev, linePos-linePrev);
-                    reqParsed.URI = word;
-                    linePrev = linePos+1;
-                    linePos = token.find(" ", linePrev);
-                    word = token.substr(linePrev, linePos-linePrev);
-                    if (word != "HTTP/1.1" && word != "HTTP/1.0") {
-                        return "400";
-                    }
-                    linePrev = linePos+1;
-                    
-                    first_time = 0;
-                    break;
-                }
-                header indHeader;
-                word = token.substr(linePrev, linePos-linePrev);
-                indHeader.name = word;
-                linePrev = linePos+1;
-                
-                word = token.substr(linePrev, token.length()-linePrev);
-                indHeader.value = word;
-                linePrev = linePos+1;
-                
-            }
-            
-            prev = pos+2;
-        }
-        
+        request reqParsed = httpParse(req);
         auto path = std::filesystem::path(reqParsed.URI);
         //need its own router here that will return response packet, 
         //if response packet has error flag, set response packet to be error stock response
@@ -128,7 +67,7 @@ public:
         std::string dir = path.parent_path().string(); // "/home/dir1/dir2/dir3/dir4"
         std::string file = path.filename().string(); // "file"
         //get canonical make sure, it matches to current (doesn't break out)
-        resp = _router.RouteReq(reqParsed.method, path, {});
+        response resp = _router.RouteReq(reqParsed.method, path, {});
         
         return respond(resp).toString();
     }
