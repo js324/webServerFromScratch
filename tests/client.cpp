@@ -15,6 +15,8 @@
 #include <arpa/inet.h>
 #include <iostream>
 #include <vector>
+#include "httpserver/threaded_server.h"
+#include <gtest/gtest.h>
 #define PORT "3490" // the port client will be connecting to 
 
 #define MAXDATASIZE 100 // max number of bytes we can get at once 

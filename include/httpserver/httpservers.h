@@ -55,9 +55,9 @@ private:
 public:
     
     std::string serve_request(std::string req) {
-        
-        request reqParsed = httpParse(req);
-        auto path = std::filesystem::path(reqParsed.URI);
+        HTTPRequest HTTPRequest{};
+        httpParse(req, HTTPRequest);  
+        auto path = std::filesystem::path(HTTPRequest.URI);
         //need its own router here that will return response packet, 
         //if response packet has error flag, set response packet to be error stock response
         //instatitae res = router.route(verb, path, params like body, headers, etc. w/e)
@@ -67,7 +67,7 @@ public:
         std::string dir = path.parent_path().string(); // "/home/dir1/dir2/dir3/dir4"
         std::string file = path.filename().string(); // "file"
         //get canonical make sure, it matches to current (doesn't break out)
-        response resp = _router.RouteReq(reqParsed.method, path, {});
+        response resp = _router.RouteReq(std::string(HTTPRequest.method), path, {});
         
         return respond(resp).toString();
     }

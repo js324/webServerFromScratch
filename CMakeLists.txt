@@ -16,7 +16,4 @@ target_include_directories(WSS INTERFACE $<BUILD_INTERFACE:${PROJECT_SOURCE_DIR}
         $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>) 
 
 add_subdirectory("tests")
-
-#if (ENABLE_TESTING)
-#    enable_testing()
-#endif()
+    enable_testing()

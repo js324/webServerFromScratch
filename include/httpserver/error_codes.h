@@ -1,0 +1,12 @@
+#pragma once
+
+enum ErrorCode {
+    OK,
+    BAD_START_LINE,
+    BAD_HTTP_VERSION,
+    BAD_HEADER_FIELD,
+    BAD_HEADER_VALUE,
+    BAD_BODY,
+    IMPROPER_CONTENT_LENGTH,
+    IMPROPER_TRANSFER_CODING,
+};

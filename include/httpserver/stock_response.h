@@ -27,7 +27,7 @@ struct response {
         std::string res;
         res = HTTP_version + " " + std::to_string(status_code) + " " + reason + "\r\n"; //bad to append so many times (copies)
         for (auto& head : headers) {
-            res += head.name + ": " + head.value + "\r\n";
+            res += std::string(head.field) + ": " + std::string(head.value) + "\r\n";
         }
         res += "\r\n";
         if (body.length()) {
