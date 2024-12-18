@@ -17,6 +17,7 @@
 // Nices to have:
 // query params in string? 
 // implement strict mode
+// look into going through assembly of optimized, unoptimized versions <- USE A GDB FRONTEND
 
 const uint8_t MAX_HEADER_LENGTH = 50;
 const uint32_t MAX_HEADER_SIZE = MAX_HEADER_LENGTH*8192; //if headers total size greater, return 4xx error
@@ -26,7 +27,10 @@ const uint8_t MAX_HEADER_VALUE_COUNT = 50;
 //having strict? -> possibly implement a strict/relaxed version of parser
 struct Flags {
     bool has_content_length;
-    bool has_chunked_transfer_coding;
+    bool has_chunked_te;
+    bool has_gzip_te;
+    bool has_compress_te;
+    bool has_deflate_te;
     bool is_keep_alive;
     bool has_upgrade_header;
     bool skip_body; // see (3.3 rfc 7230 for conditions for this, mostly for response body but for request signaled by Content-Length or Transfer-Encoding (strict?))
@@ -34,14 +38,20 @@ struct Flags {
     bool operator==(const Flags& other) const
     {
         return has_content_length == other.has_content_length &&
-            has_chunked_transfer_coding == other.has_chunked_transfer_coding &&
+            has_chunked_te == other.has_chunked_te &&
+            has_gzip_te == other.has_gzip_te &&
+            has_compress_te == other.has_compress_te &&
+            has_deflate_te == other.has_deflate_te &&
             is_keep_alive == other.is_keep_alive &&
             has_upgrade_header == other.has_upgrade_header &&
             skip_body == other.skip_body;
     }
     friend std::ostream& operator<<(std::ostream& os, const Flags& obj) {
         os << "{ has_content_length: " << obj.has_content_length
-                    << ", has_transfer_encoding: " << obj.has_chunked_transfer_coding
+                    << ", has_chunked_transfer_encoding: " << obj.has_chunked_te
+                    << ", has_gzip_transfer_encoding: " << obj.has_gzip_te
+                    << ", has_compress_transfer_encoding: " << obj.has_compress_te
+                    << ", has_deflate_transfer_encoding: " << obj.has_deflate_te
                     << ", is_keep_alive: " << obj.is_keep_alive
                     << ", has_upgrade_header: " << obj.has_upgrade_header
                     << ", skip_body: " << obj.skip_body 
@@ -305,44 +315,54 @@ class HTTPRequest {
                         if (req[i] == 'c') {
                             i++;
                             if (req[i] == 'h') {
+                                //this sohuld be last encoding in requests otherwise error (? 3.3.3)
                                 if (req.substr(i, 6) == "hunked") {
                                     i += 6;
-                                    flags.has_chunked_transfer_coding = true;
+                                    flags.has_chunked_te = true;
                                 }
                                 else {
+                                    return_code = IMPROPER_TRANSFER_CODING;
                                     return IMPROPER_TRANSFER_CODING;
                                 }
                             }
                             else if (req[i] == 'o') {
                                 if (req.substr(i, 7) == "ompress") {
+                                    flags.has_compress_te = true;
                                     i += 7;
                                 }
                                 else {
+                                    return_code = IMPROPER_TRANSFER_CODING;
                                     return IMPROPER_TRANSFER_CODING;
                                 }
                             }
                             else {
+                                return_code = IMPROPER_TRANSFER_CODING;
                                 return IMPROPER_TRANSFER_CODING;
                             }
                             //chunked or compress
                         }
                         else if (req[i] == 'd') {
                             if (req.substr(i, 7) == "deflate") {
+                                flags.has_deflate_te = true;
                                 i += 7;
                             } 
                             else {
+                                return_code = IMPROPER_TRANSFER_CODING;
                                 return IMPROPER_TRANSFER_CODING;
                             }
                         }
                         else if (req[i] == 'g') {
                             if (req.substr(i, 4) == "gzip") {
+                                flags.has_gzip_te = true;
                                 i += 4;
                             } 
                             else {
+                                return_code = IMPROPER_TRANSFER_CODING;
                                 return IMPROPER_TRANSFER_CODING;
                             }
                         }
                         else {
+                            return_code = IMPROPER_TRANSFER_CODING;
                             return IMPROPER_TRANSFER_CODING;
                         }
 
@@ -357,11 +377,13 @@ class HTTPRequest {
                             break;
                         }
                         else {
+                            return_code = IMPROPER_TRANSFER_CODING;
                             return IMPROPER_TRANSFER_CODING;
                         }
                         
                     }
                     if (req[i++] != '\r' || req[i] != '\n') {
+                        return_code = BAD_HEADER_VALUE;
                         return BAD_HEADER_VALUE;
                     }
                     //for now only taking chunked, compress, deflate, gzip (only ones registered and valid in HTTP Transfer Coding registry)
@@ -376,21 +398,18 @@ class HTTPRequest {
                         ++pos;
                     }
                     //case where multiple content-length header fields strict?
-                    if (flags.has_content_length) {
+                    if (flags.has_content_length || flags.has_chunked_te || flags.has_gzip_te || flags.has_compress_te || flags.has_deflate_te) {
+                        return_code = IMPROPER_CONTENT_LENGTH;
                         return IMPROPER_CONTENT_LENGTH;
                     }
                     //unlike normal header value need to check there was actually value (digit), also handles cases where multiple values (42, 42)
                     while (isdigit(req[i])) {
                         ++i;
                     } 
-                    //note \r\n check, value setter, etc. is repeated, probably should separate into another state
-                    if (req[i++] != '\r' || req[i] != '\n') {
-                        return BAD_HEADER_VALUE;
-                    }
-                    
+
                     flags.has_content_length = true;
                     {
-                        auto contentLenStr = std::string_view(req).substr(pos, (i-1)-pos); //i-1 beccause we included the \n
+                        auto contentLenStr = std::string_view(req).substr(pos, (i)-pos); 
                         headers[headerCnt].value = contentLenStr;
                         int placeValue = 1;
                         for (auto it = contentLenStr.rbegin(); it != contentLenStr.rend(); ++it) {
@@ -398,6 +417,16 @@ class HTTPRequest {
                             placeValue *= 10;
                         } 
                     }
+
+                    while (req[i] == ' ' || req[i] == '\t') { //get rid of OWS
+                        ++i;
+                    }
+                    //note \r\n check, value setter, etc. is repeated, probably should separate into another state
+                    if (req[i++] != '\r' || req[i] != '\n') {
+                        return_code = BAD_HEADER_VALUE;
+                        return BAD_HEADER_VALUE;
+                    }
+                    
                     ++headerCnt; //increment header length/counter
                     currState = (req[i+1] == '\r' ? BODY : HEADER_FIELD); //read ahead [i+1] here maybe unnecessary
                 break;
@@ -406,9 +435,10 @@ class HTTPRequest {
                     //initial carriage is skipped by for loop
                     //Request check if Content-Length or Transfer-Encoding
                     //Reponse see (RFC 7230 3.3), depends on request method and status code
-                    
-                    
+                    // Incomplete message (through some error?) If 1. chunked encoding and 0-sized chunk NOT received or 2. content length and body size in octets is less than val
+
                     if (req[i++] != '\r' || req[i] != '\n') {
+                        return_code = BAD_BODY;
                         return BAD_BODY;
                     }
                     ++i;
@@ -416,11 +446,14 @@ class HTTPRequest {
                         //for request: 1. Need Transfer Encoding header or Content Length (both present, TE overrides)
                         //                1a. Content Length represents message body length in octets
                         //             2. If 1. not true, we assume body length is 0 (strict? we can reject if there is body with no Content Length)
-                    this->body = std::string_view(req).substr(i, req.length());
+                    this->body = std::string_view(req).substr(i, req.length()); 
+                    return_code = OK;
+                    return OK;
                 break;
             }
         }
         // std::cout << httpRequest;
+        return_code = OK;
         return OK;
     }
 

@@ -4,14 +4,6 @@ struct HTTPParserTestParams {
     std::string req;
     HTTPRequest expected;
 };
-/* FLAGS ----
-  bool has_content_length;
-  bool has_chunked_transfer_coding;
-  bool is_keep_alive;
-  bool has_upgrade_header;
-  bool skip_body; 
-*/
-
 
 TEST_F(BasicParserTest, BasicTest) {
   std::string req = "GET /cookies HTTP/1.1\r\nHost: 127.0.0.1:8090\r\nCookie: name=wookie\r\n\r\nthis is the body time to test";
@@ -35,8 +27,19 @@ TEST_F(BasicParserTest, BasicTest) {
 
 TEST_F(BasicParserTest, StrictSpaceRequestLine) {
   std::string req = "GET  /cookies HTTP/1.1\r\nHost: 127.0.0.1:8090\r\nCookie: name=wookie\r\n\r\nthis is the body time to test";
+  HTTPRequest expectedRequest {
+    "GET",
+    "",
+    1,
+    1,
+    {},
+    "",
+    0,
+    {},
+    ErrorCode::BAD_START_LINE
+  };  
   int returnCode = httpRequest.parse(req);
-  EXPECT_TRUE(httpRequest.return_code == BAD_START_LINE);
+  EXPECT_TRUE(httpRequest.equals(expectedRequest));
 }
 
 TEST_F(BasicParserTest, BadFormatHTTPVersion) {
@@ -76,7 +79,7 @@ TEST_F(BasicParserTest, BasicTransferCoding) {
   std::string req = "GET /cookies HTTP/1.1\r\nTransfer-Encoding: gzip, chunked  \r\n";
   std::array<header, 50> expectedHeaders{{ 
       { "Transfer-Encoding", "gzip, chunked  " } }};
-  Flags expectedFlags{ false, true, false, false, false };
+  Flags expectedFlags{ false, true, true, false, false, false, false, false };
   HTTPRequest expectedRequest {
     "GET",
     "/cookies",
@@ -99,7 +102,7 @@ TEST_F(BasicParserTest, BasicMultiHeader) {
   std::array<header, 50> expectedHeaders{{ 
       { "Transfer-Encoding", "gzip, chunked  " },
       { "Host", "127.0.0.1:8090" }}};
-  Flags expectedFlags{ false, true, false, false, false };
+  Flags expectedFlags{ false, true, true, false, false, false, false, false };
   HTTPRequest expectedRequest {
     "GET",
     "/cookies",
