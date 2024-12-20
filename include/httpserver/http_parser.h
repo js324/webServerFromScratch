@@ -9,9 +9,9 @@
 #include "header.h"
 #include "error_codes.h"
 // things to do:
-// either get rid of error code as field or properly set err code in each return val
 // implement chunked transfer encoding algo
 // implement new states for header values so we don't need to repeat loop for whitespace
+// keep all the structs, enums, constants, etc. INSIDE the class, we don't this to collide with ppl's code 
 
 
 // Nices to have:
@@ -71,6 +71,8 @@ enum ParsingState {
     TRANSFER_CODING_VALUE, 
     CONTENT_LENGTH_VALUE,
     BODY,
+    CHUNKED_BODY_CHUNK, //include parsing last chunk
+    CHUNKED_HEADER_FIELD, //actually might be better to separate parsing headers into separate loop, 
     END_PARSE,
 };
 
@@ -84,6 +86,7 @@ class HTTPRequest {
         bool isVChar(const char c) { unsigned char newC =  static_cast<unsigned char>(c); return newC < 127 && newC > 32; } //between Space and DEL in ASCII chart 
         bool isTokenChar(const char c ) { return c == '!' || c == '#' || c == '$' || c == '%' || c == '&' || c == '\'' || c == '*' || c ==  '+' || c == '-' || c == '.' || 
             c == '^' || c == '_' || c == '`' || c == '|' || c == '~' || std::isdigit(c) || std::isalpha(c); }                                                                                                                            
+        bool isHexDig(const char c) { return std::isdigit(c) || std::isalpha(c); }
         bool isTabOrSpace(const char c) { return c == ' ' || c == '\t'; }                                                                                                            
     public:
         std::string_view method;
@@ -302,7 +305,7 @@ class HTTPRequest {
                     currState = (req[i+1] == '\r' ? BODY : HEADER_FIELD); //read ahead [i+1] here maybe unnecessary
                 break;
                 case TRANSFER_CODING_VALUE: //this and content length is mutually exclusive strict?
-                    //1. should not apply chunked more than once to body2. chunked should be final transfer coding strict?
+                    //1. should not apply chunked more than once to body2. chunked should be final transfer coding strict? MEANING IT SHOULD ALWAYS BE PRESENT ON A REQUEST IF TE IS USED
                     while (req[i] == ' ' || req[i] == '\t') {
                         ++i;
                         ++pos;
@@ -428,6 +431,7 @@ class HTTPRequest {
                     }
                     
                     ++headerCnt; //increment header length/counter
+                    //If chunked transfer encoding, 
                     currState = (req[i+1] == '\r' ? BODY : HEADER_FIELD); //read ahead [i+1] here maybe unnecessary
                 break;
                 case BODY:
@@ -450,11 +454,59 @@ class HTTPRequest {
                     return_code = OK;
                     return OK;
                 break;
+                case CHUNKED_BODY_CHUNK:
+                    if (req[i++] != '\r' || req[i++] != '\n') {
+                        return_code = BAD_CHUNK;
+                        return BAD_CHUNK;
+                    }
+                    //AT THIS POINT, CHUNK COULD BE CUT OFF AT ANY TIME, INSTEAD OF DOING PARSING/HAVING A STATE HERE, SHOULD LIKELY RETURN A STATUS CODE NOTING TO PARSE THE CHUNKS 
+                    
+                    //read size first
+                    pos = i;
+                    while (isHexDig(req[i++])); 
+                    if (pos == i) {
+                        return_code = BAD_CHUNK;
+                        return BAD_CHUNK;
+                    } 
+                    int chunkSize = 1; //replace with reading the hex digits
+
+                    //then read any extensions ([;token=token]) GENERALLY THIS AND SIZE OF CHUNK SHOULD HAVE LIMIT ALSO
+                    // And to be honest, this is likely going to be not used at all so... skipping over for now
+                    while (req[i++] != '\r' || req[i++] != '\n');
+
+                    // then CRLF
+                    if (req[i++] != '\r' || req[i++] != '\n') {
+                        return_code = BAD_CHUNK;
+                        return BAD_CHUNK;
+                    }
+                    // then data (just skip over)
+                    body = std::string_view(req).substr(i, chunkSize); 
+                    i += chunkSize;
+                    
+                    // then check CRLF
+                    if (req[i++] != '\r' || req[i++] != '\n') {
+                        return_code = BAD_CHUNK;
+                        return BAD_CHUNK;
+                    }
+                    
+                    // If chunk size was 0, go trailer otherwise loop
+                    if (chunkSize == 0) {
+                        
+                    }
+                break;
             }
         }
         // std::cout << httpRequest;
         return_code = OK;
         return OK;
     }
+    //Create a separate method just for parsing the chunked
+
+
+    //Create a sepraate method just for parsing the headers
+
+    //Creating separate methods for parsing different parts of message is like picohttp, 
+        //but for chunked I think we can keep reuse same parser object like http-parser does it
+            //Specifically use content length to store chunk sizes and use it as the offset/how many more bytes expected to read 
 
 };
