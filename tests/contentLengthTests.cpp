@@ -5,7 +5,7 @@ TEST_F(ContentLengthTest, BasicContentLengthWithOWS) {
   std::string req = "GET /cookies HTTP/1.1\r\nContent-Length: 1234  \r\n";
   std::array<header, 50> expectedHeaders{{ 
       { "Content-Length", "1234" } }};
-  Flags expectedFlags{ true, false, false, false, false };
+  HTTPRequest::Flags expectedFlags{ true, false, false, false, false };
   HTTPRequest expectedRequest {
     "GET",
     "/cookies",
@@ -29,7 +29,7 @@ TEST_F(ContentLengthTest, StrictMultipleContentLength) {
       { "Content-Length", "1234" },
       { "Content-Length", "" } }};
 
-  Flags expectedFlags{ true, false, false, false, false };
+  HTTPRequest::Flags expectedFlags{ true, false, false, false, false };
   HTTPRequest expectedRequest {
     "GET",
     "/cookies",
@@ -51,7 +51,7 @@ TEST_F(BasicParserTest, StrictTEandContentLength) {
       { "Transfer-Encoding", "gzip, chunked  " },
       { "Content-Length", "" } }};
 
-  Flags expectedFlags{ false, true, true, false, false };
+  HTTPRequest::Flags expectedFlags{ false, true, true, false, false };
   HTTPRequest expectedRequest {
     "GET",
     "/cookies",

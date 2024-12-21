@@ -79,7 +79,7 @@ TEST_F(BasicParserTest, BasicTransferCoding) {
   std::string req = "GET /cookies HTTP/1.1\r\nTransfer-Encoding: gzip, chunked  \r\n";
   std::array<header, 50> expectedHeaders{{ 
       { "Transfer-Encoding", "gzip, chunked  " } }};
-  Flags expectedFlags{ false, true, true, false, false, false, false, false };
+  HTTPRequest::Flags expectedFlags{ false, true, true, false, false, false, false, false };
   HTTPRequest expectedRequest {
     "GET",
     "/cookies",
@@ -102,7 +102,7 @@ TEST_F(BasicParserTest, BasicMultiHeader) {
   std::array<header, 50> expectedHeaders{{ 
       { "Transfer-Encoding", "gzip, chunked  " },
       { "Host", "127.0.0.1:8090" }}};
-  Flags expectedFlags{ false, true, true, false, false, false, false, false };
+  HTTPRequest::Flags expectedFlags{ false, true, true, false, false, false, false, false };
   HTTPRequest expectedRequest {
     "GET",
     "/cookies",

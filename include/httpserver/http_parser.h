@@ -19,68 +19,37 @@
 // implement strict mode
 // look into going through assembly of optimized, unoptimized versions <- USE A GDB FRONTEND
 
-const uint8_t MAX_HEADER_LENGTH = 50;
-const uint32_t MAX_HEADER_SIZE = MAX_HEADER_LENGTH*8192; //if headers total size greater, return 4xx error
-const uint32_t MAX_SIZE = 1000000; //if total size of request/response greater, return 4xx
-const uint8_t MAX_HEADER_VALUE_COUNT = 50;
-
-//having strict? -> possibly implement a strict/relaxed version of parser
-struct Flags {
-    bool has_content_length;
-    bool has_chunked_te;
-    bool has_gzip_te;
-    bool has_compress_te;
-    bool has_deflate_te;
-    bool is_keep_alive;
-    bool has_upgrade_header;
-    bool skip_body; // see (3.3 rfc 7230 for conditions for this, mostly for response body but for request signaled by Content-Length or Transfer-Encoding (strict?))
-
-    bool operator==(const Flags& other) const
-    {
-        return has_content_length == other.has_content_length &&
-            has_chunked_te == other.has_chunked_te &&
-            has_gzip_te == other.has_gzip_te &&
-            has_compress_te == other.has_compress_te &&
-            has_deflate_te == other.has_deflate_te &&
-            is_keep_alive == other.is_keep_alive &&
-            has_upgrade_header == other.has_upgrade_header &&
-            skip_body == other.skip_body;
-    }
-    friend std::ostream& operator<<(std::ostream& os, const Flags& obj) {
-        os << "{ has_content_length: " << obj.has_content_length
-                    << ", has_chunked_transfer_encoding: " << obj.has_chunked_te
-                    << ", has_gzip_transfer_encoding: " << obj.has_gzip_te
-                    << ", has_compress_transfer_encoding: " << obj.has_compress_te
-                    << ", has_deflate_transfer_encoding: " << obj.has_deflate_te
-                    << ", is_keep_alive: " << obj.is_keep_alive
-                    << ", has_upgrade_header: " << obj.has_upgrade_header
-                    << ", skip_body: " << obj.skip_body 
-                    << " }" << std::endl;
-        return os;
-    }   
-};
-
-enum ParsingState {
-    METHOD,
-    REQUEST_TARGET,
-    HTTP_VERSION,
-    HEADER_FIELD,
-    START_OWS_HEADER_VALUE,
-    HEADER_VALUE,
-    END_OWS_HEADER_VALUE,
-    TRANSFER_CODING_VALUE, 
-    CONTENT_LENGTH_VALUE,
-    BODY,
-    CHUNKED_BODY_CHUNK, //include parsing last chunk
-    CHUNKED_HEADER_FIELD, //actually might be better to separate parsing headers into separate loop, 
-    END_PARSE,
-};
-
-
-
 class HTTPRequest {
     private:
-        
+        static const uint8_t MAX_HEADER_LENGTH = 50;
+        static const uint32_t MAX_HEADER_SIZE = MAX_HEADER_LENGTH*8192; //if headers total size greater, return 4xx error
+        static const uint32_t MAX_SIZE = 1000000; //if total size of request/response greater, return 4xx
+        static const uint8_t MAX_HEADER_VALUE_COUNT = 50;
+
+        //having strict? -> possibly implement a strict/relaxed version of parser
+        enum ParsingState {
+            METHOD,
+            REQUEST_TARGET,
+            HTTP_VERSION,
+            HEADER_FIELD,
+            START_OWS_HEADER_VALUE,
+            HEADER_VALUE,
+            END_OWS_HEADER_VALUE,
+            TRANSFER_CODING_VALUE, 
+            CONTENT_LENGTH_VALUE,
+            BODY,
+            CHUNKED_BODY_CHUNK, //include parsing last chunk
+            CHUNKED_HEADER_FIELD, //actually might be better to separate parsing headers into separate loop, 
+            END_PARSE,
+        };
+
+        enum ParsingChunkedState {
+            CHUNK_SIZE,
+            CHUNK_EXTENSIONS,
+            CHUNK_DATA,
+            TRAILERS
+        };
+
         //basically is VCHAR also (visible char)
         bool isOBSText(const char c) { unsigned char newC =  static_cast<unsigned char>(c); return newC > 127; } //Gets all other non US ASCII chars (valid for header value)
         bool isVChar(const char c) { unsigned char newC =  static_cast<unsigned char>(c); return newC < 127 && newC > 32; } //between Space and DEL in ASCII chart 
@@ -89,6 +58,41 @@ class HTTPRequest {
         bool isHexDig(const char c) { return std::isdigit(c) || std::isalpha(c); }
         bool isTabOrSpace(const char c) { return c == ' ' || c == '\t'; }                                                                                                            
     public:
+        struct Flags {
+            bool has_content_length;
+            bool has_chunked_te;
+            bool has_gzip_te;
+            bool has_compress_te;
+            bool has_deflate_te;
+            bool is_keep_alive;
+            bool has_upgrade_header;
+            bool skip_body; // see (3.3 rfc 7230 for conditions for this, mostly for response body but for request signaled by Content-Length or Transfer-Encoding (strict?))
+
+            bool operator==(const Flags& other) const
+            {
+                return has_content_length == other.has_content_length &&
+                    has_chunked_te == other.has_chunked_te &&
+                    has_gzip_te == other.has_gzip_te &&
+                    has_compress_te == other.has_compress_te &&
+                    has_deflate_te == other.has_deflate_te &&
+                    is_keep_alive == other.is_keep_alive &&
+                    has_upgrade_header == other.has_upgrade_header &&
+                    skip_body == other.skip_body;
+            }
+            friend std::ostream& operator<<(std::ostream& os, const Flags& obj) {
+                os << "{ has_content_length: " << obj.has_content_length
+                            << ", has_chunked_transfer_encoding: " << obj.has_chunked_te
+                            << ", has_gzip_transfer_encoding: " << obj.has_gzip_te
+                            << ", has_compress_transfer_encoding: " << obj.has_compress_te
+                            << ", has_deflate_transfer_encoding: " << obj.has_deflate_te
+                            << ", is_keep_alive: " << obj.is_keep_alive
+                            << ", has_upgrade_header: " << obj.has_upgrade_header
+                            << ", skip_body: " << obj.skip_body 
+                            << " }" << std::endl;
+                return os;
+            }   
+        };
+
         std::string_view method;
         std::string_view URI;
         uint8_t maj_version; //waste of space, maybe just use bool if we are only allowing 1.0 or 1.1
@@ -156,7 +160,7 @@ class HTTPRequest {
     }      
     
     //another thing to consider -> ASCII (token) vs non ASCII characters
-    int parse(std::string_view req) { //return status as int
+    ErrorCode parse(std::string_view req) { //return status as int
 
         size_t pos = 0;
         // std::string delimiter = "\r\n";
@@ -489,7 +493,9 @@ class HTTPRequest {
                         return BAD_CHUNK;
                     }
                     
-                    // If chunk size was 0, go trailer otherwise loop
+                    // If chunk size was 0, go trailer which should parse like noraml headers (KEEP IN MIND SOME HEADERS ARE FORBBIDEN) otherwise loop
+                        // We can append to same header structure 
+                        // recipient MAY process the fields (aside from those forbidden above) as if they were appended to the message's header section.
                     if (chunkSize == 0) {
                         
                     }
@@ -501,10 +507,14 @@ class HTTPRequest {
         return OK;
     }
     //Create a separate method just for parsing the chunked
-
-
+    ErrorCode parseHeaders(std::string_view req) { 
+        return OK;
+    }
     //Create a sepraate method just for parsing the headers
-
+    ErrorCode parseChunked(std::string_view req) { 
+        return_code = OK;
+        return OK;
+    }
     //Creating separate methods for parsing different parts of message is like picohttp, 
         //but for chunked I think we can keep reuse same parser object like http-parser does it
             //Specifically use content length to store chunk sizes and use it as the offset/how many more bytes expected to read 
