@@ -27,6 +27,15 @@ class BasicParserTest : public testing::Test {
 
   // Class members declared here can be used by all tests in the test suite
   // for Foo.
+public: 
+   void compareResults(HTTPRequest expected) {
+      std::cout << "EXPECTED: " << std::endl
+         << expected << std::endl
+         << "RESULT: " << std::endl
+         << httpRequest << std::endl;
+   }
 };
 
 class ContentLengthTest: public BasicParserTest {};
+
+class TransferChunkedTest: public BasicParserTest {};

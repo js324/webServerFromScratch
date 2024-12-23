@@ -18,7 +18,7 @@ FetchContent_Declare(
 set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
-add_executable(${PROJECT_NAME} tests.cpp contentLengthTests.cpp fixtures.h)
+add_executable(${PROJECT_NAME} tests.cpp contentLengthTests.cpp transferChunkedTests.cpp fixtures.h)
 target_link_libraries(${PROJECT_NAME} PUBLIC WSS gtest gtest_main) 
 install (TARGETS ${PROJECT_NAME} DESTINATION bin)
 

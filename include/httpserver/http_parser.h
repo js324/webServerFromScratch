@@ -37,6 +37,7 @@ class HTTPRequest {
             END_OWS_HEADER_VALUE,
             TRANSFER_CODING_VALUE, 
             CONTENT_LENGTH_VALUE,
+            HEADER_VALUE_END,
             BODY,
             CHUNKED_BODY_CHUNK, //include parsing last chunk
             CHUNKED_HEADER_FIELD, //actually might be better to separate parsing headers into separate loop, 
@@ -148,12 +149,10 @@ class HTTPRequest {
         os << "URI: " << obj.URI << std::endl;
         os << "HTTP Version: " << unsigned(obj.maj_version) << "." << unsigned(obj.min_version) << std::endl;
         for (auto header : obj.headers) {
-            if (header.field == "")
-                break;
-            os << "Header Field/Value: " << header.field << " / " << header.value << std::endl;
+            os << "Header Field/Value: " << "\"" << header.field << "\"" << " / " << "\"" << header.value << "\"" << std::endl;
         }
         os << "Content-Length: " << obj.content_length << std::endl;
-        os << "Body: " << obj.body << std::endl;
+        os << "Body: "  << "\"" << obj.body << "\"" << std::endl;
         os << "Flags: " << obj.flags << std::endl;
         os << "Return Code: " << obj.return_code << std::endl;
         return os;
@@ -306,10 +305,14 @@ class HTTPRequest {
 
                     this->headers[headerCnt].value = std::string_view(req).substr(pos, (i-1)-pos); //i-1 beccause we included the \n
                     ++headerCnt; //increment header length/counter
-                    currState = (req[i+1] == '\r' ? BODY : HEADER_FIELD); //read ahead [i+1] here maybe unnecessary
+                    currState = HEADER_VALUE_END;
                 break;
                 case TRANSFER_CODING_VALUE: //this and content length is mutually exclusive strict?
                     //1. should not apply chunked more than once to body2. chunked should be final transfer coding strict? MEANING IT SHOULD ALWAYS BE PRESENT ON A REQUEST IF TE IS USED
+                    if (flags.has_content_length) {
+                        return_code = IMPROPER_TRANSFER_CODING;
+                        return IMPROPER_TRANSFER_CODING;
+                    }
                     while (req[i] == ' ' || req[i] == '\t') {
                         ++i;
                         ++pos;
@@ -396,8 +399,7 @@ class HTTPRequest {
                     //for now only taking chunked, compress, deflate, gzip (only ones registered and valid in HTTP Transfer Coding registry)
                     headers[headerCnt].value = std::string_view(req).substr(pos, (i-1)-pos); //i-1 beccause we included the \n
                     ++headerCnt; //increment header length/counter
-                    currState = (req[i+1] == '\r' ? BODY : HEADER_FIELD); //read ahead [i+1] here maybe unnecessary
-                
+                    currState = HEADER_VALUE_END;
                 break;
                 case CONTENT_LENGTH_VALUE: 
                     while (req[i] == ' ' || req[i] == '\t') { //get rid of OWS
@@ -436,7 +438,24 @@ class HTTPRequest {
                     
                     ++headerCnt; //increment header length/counter
                     //If chunked transfer encoding, 
-                    currState = (req[i+1] == '\r' ? BODY : HEADER_FIELD); //read ahead [i+1] here maybe unnecessary
+                    currState = HEADER_VALUE_END;
+                break;
+                case HEADER_VALUE_END:
+                    if (req[i] == '\r') { //read ahead [i+1] here maybe unnecessary
+                        if (req[++i] != '\n') {
+                            return_code = BAD_BODY;
+                            return BAD_BODY;
+                        }
+                       currState = flags.has_chunked_te ? CHUNKED_BODY_CHUNK : BODY;
+                    }
+                    else if (isTokenChar(req[i])) {
+                        i-=1; //Since we are already on first character of header field, must revert for loop increment
+                       currState = HEADER_FIELD;
+                    }
+                    else {
+                        return_code = BAD_BODY;
+                        return BAD_BODY;
+                    }
                 break;
                 case BODY:
                     //skip through CRLF
@@ -445,11 +464,6 @@ class HTTPRequest {
                     //Reponse see (RFC 7230 3.3), depends on request method and status code
                     // Incomplete message (through some error?) If 1. chunked encoding and 0-sized chunk NOT received or 2. content length and body size in octets is less than val
 
-                    if (req[i++] != '\r' || req[i] != '\n') {
-                        return_code = BAD_BODY;
-                        return BAD_BODY;
-                    }
-                    ++i;
                     // 3.3.3 in 7230 to determine length of body
                         //for request: 1. Need Transfer Encoding header or Content Length (both present, TE overrides)
                         //                1a. Content Length represents message body length in octets
@@ -459,45 +473,55 @@ class HTTPRequest {
                     return OK;
                 break;
                 case CHUNKED_BODY_CHUNK:
-                    if (req[i++] != '\r' || req[i++] != '\n') {
-                        return_code = BAD_CHUNK;
-                        return BAD_CHUNK;
-                    }
                     //AT THIS POINT, CHUNK COULD BE CUT OFF AT ANY TIME, INSTEAD OF DOING PARSING/HAVING A STATE HERE, SHOULD LIKELY RETURN A STATUS CODE NOTING TO PARSE THE CHUNKS 
                     
                     //read size first
                     pos = i;
-                    while (isHexDig(req[i++])); 
+                    while (isHexDig(req[i])) { ++i; } 
                     if (pos == i) {
                         return_code = BAD_CHUNK;
                         return BAD_CHUNK;
-                    } 
-                    int chunkSize = 1; //replace with reading the hex digits
-
-                    //then read any extensions ([;token=token]) GENERALLY THIS AND SIZE OF CHUNK SHOULD HAVE LIMIT ALSO
-                    // And to be honest, this is likely going to be not used at all so... skipping over for now
-                    while (req[i++] != '\r' || req[i++] != '\n');
-
-                    // then CRLF
-                    if (req[i++] != '\r' || req[i++] != '\n') {
-                        return_code = BAD_CHUNK;
-                        return BAD_CHUNK;
                     }
-                    // then data (just skip over)
-                    body = std::string_view(req).substr(i, chunkSize); 
-                    i += chunkSize;
-                    
-                    // then check CRLF
-                    if (req[i++] != '\r' || req[i++] != '\n') {
-                        return_code = BAD_CHUNK;
-                        return BAD_CHUNK;
-                    }
-                    
-                    // If chunk size was 0, go trailer which should parse like noraml headers (KEEP IN MIND SOME HEADERS ARE FORBBIDEN) otherwise loop
-                        // We can append to same header structure 
-                        // recipient MAY process the fields (aside from those forbidden above) as if they were appended to the message's header section.
-                    if (chunkSize == 0) {
+
+                    {
+                        auto chunkSizeStr = std::string_view(req).substr(pos, (i)-pos); 
+                        int placeValue = 1;
+                        std::cout << "CHUNKED" << chunkSizeStr;
+                        for (auto it = chunkSizeStr.rbegin(); it != chunkSizeStr.rend(); ++it) {
+                            if (std::isdigit(*it))
+                                content_length += (*it - '0') * placeValue;
+                            else 
+                                content_length += (std::isupper(*it) ? (*it - 'A') : (*it - 'a')) * placeValue;
+                            placeValue *= 16;
+                        } 
+
+                        //then read any extensions ([;token=token]) GENERALLY THIS AND SIZE OF CHUNK SHOULD HAVE LIMIT ALSO
+                        // And to be honest, this is likely going to be not used at all so... skipping over for now
+                        while (req[i] != '\r' && req[i] != '\n') { ++i; }
+
+                        // then CRLF
+                        if (req[i++] != '\r' || req[i++] != '\n') {
+                            return_code = BAD_CHUNK;
+                            return BAD_CHUNK;
+                        }
+                        // then data (just skip over)
+                        body = std::string_view(req).substr(i, content_length); 
+                        i += content_length;
                         
+                        // then check CRLF
+                        if (req[i++] != '\r' || req[i++] != '\n') {
+                            return_code = BAD_CHUNK;
+                            return BAD_CHUNK;
+                        }
+                        
+                        // If chunk size was 0, go trailer which should parse like noraml headers (KEEP IN MIND SOME HEADERS ARE FORBBIDEN) otherwise loop
+                            // We can append to same header structure 
+                            // recipient MAY process the fields (aside from those forbidden above) as if they were appended to the message's header section.
+                        if (content_length == 0) {
+                            
+                        }
+                        return_code = OK;
+                        return OK;
                     }
                 break;
             }
@@ -518,5 +542,6 @@ class HTTPRequest {
     //Creating separate methods for parsing different parts of message is like picohttp, 
         //but for chunked I think we can keep reuse same parser object like http-parser does it
             //Specifically use content length to store chunk sizes and use it as the offset/how many more bytes expected to read 
+            //Won't need content length since we parsing only parts of body (usually) and technically exclusive with TE regardless 
 
 };
