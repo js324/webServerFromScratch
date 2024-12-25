@@ -19,7 +19,7 @@ TEST_F(TransferChunkedTest, BasicTransferChunkedTest) {
   };  
   
   httpRequest.parse(req);
-    compareResults(expectedRequest);
+    // compareResults(expectedRequest);
   EXPECT_TRUE(httpRequest.equals(expectedRequest));
 }
 

@@ -6,13 +6,15 @@
 #include <fstream> 
 #include <sstream>
 #include <unordered_map>
+#include <variant>
 #include "header.h"
 #include "error_codes.h"
 // things to do:
 // implement chunked transfer encoding algo
+    //Now need to add in states/switch case
 // implement new states for header values so we don't need to repeat loop for whitespace
-// keep all the structs, enums, constants, etc. INSIDE the class, we don't this to collide with ppl's code 
-
+// Implement a builder pattern for Flags so that its easier to explicitly initialize certain flags (this is more so for writing tests)
+// NEED! to have EOF checks and substr checks, make sure THERE IS NO THROWS!
 
 // Nices to have:
 // query params in string? 
@@ -26,6 +28,7 @@ class HTTPRequest {
         static const uint32_t MAX_SIZE = 1000000; //if total size of request/response greater, return 4xx
         static const uint8_t MAX_HEADER_VALUE_COUNT = 50;
 
+        uint8_t headerCnt = 0;
         //having strict? -> possibly implement a strict/relaxed version of parser
         enum ParsingState {
             METHOD,
@@ -50,6 +53,10 @@ class HTTPRequest {
             CHUNK_DATA,
             TRAILERS
         };
+        // note this is 8 bytes https://stackoverflow.com/questions/45575892/why-is-sizeofstdvariant-the-same-size-as-a-struct-with-the-same-members
+        // does it matter? should we just use int or combine two enums into one?
+        // std::variant<ParsingState, ParsingChunkedState> currState = METHOD;
+        uint8_t currState = METHOD;
 
         //basically is VCHAR also (visible char)
         bool isOBSText(const char c) { unsigned char newC =  static_cast<unsigned char>(c); return newC > 127; } //Gets all other non US ASCII chars (valid for header value)
@@ -149,7 +156,8 @@ class HTTPRequest {
         os << "URI: " << obj.URI << std::endl;
         os << "HTTP Version: " << unsigned(obj.maj_version) << "." << unsigned(obj.min_version) << std::endl;
         for (auto header : obj.headers) {
-            os << "Header Field/Value: " << "\"" << header.field << "\"" << " / " << "\"" << header.value << "\"" << std::endl;
+            if (header.field != "" && header.value != "")
+                os << "Header Field/Value: " << "\"" << header.field << "\"" << " / " << "\"" << header.value << "\"" << std::endl;
         }
         os << "Content-Length: " << obj.content_length << std::endl;
         os << "Body: "  << "\"" << obj.body << "\"" << std::endl;
@@ -159,15 +167,11 @@ class HTTPRequest {
     }      
     
     //another thing to consider -> ASCII (token) vs non ASCII characters
-    ErrorCode parse(std::string_view req) { //return status as int
-
-        size_t pos = 0;
+    ErrorCode parse(std::string_view req, size_t startPos = 0) { //return status as int
+        size_t pos;
         // std::string delimiter = "\r\n";
-        ParsingState currState = METHOD;
-        uint8_t headerCnt = 0;
-        uint8_t headerValueCnt = 0;
         uint32_t reqLength = req.length();
-        for (size_t i = 0; i < reqLength; i++ ) {
+        for (size_t i = startPos; i < reqLength; i++ ) {
             pos = i;
             switch (currState) {
                 //NO PREDEFINED LIMIT ON LENGTH OF REQUEST LINE, min 8000 octets (otherwise error if above max)
@@ -250,212 +254,7 @@ class HTTPRequest {
                 break;
                 //AGAIN IGNORE LARGER THAN MAX SIZE FOR FIELD AND VALUE
                 case HEADER_FIELD:
-                    //HEADER FIELD STRICTLY TOKEN AND NO WHITESPACE
-                    while (req[i] != ':') {
-                        if (!isTokenChar(req[i])) {
-                            return_code = BAD_HEADER_FIELD;
-                            return BAD_HEADER_FIELD;
-                        }
-                        ++i;
-                    }
-                    //NO SPACES IN HEADER FIELD
-                    this->headers[headerCnt].field = std::string_view(req).substr(pos, i-pos);
-                    if (this->headers[headerCnt].field == "Transfer-Encoding") { //generally only 1.1 feature (strict?)
-                        currState = TRANSFER_CODING_VALUE;
-                    }
-                    else if (this->headers[headerCnt].field == "Content-Length") { 
-                        currState = CONTENT_LENGTH_VALUE;
-                    }
-                    else {
-                        currState = START_OWS_HEADER_VALUE;
-                    }
-                break;
-                // according to 3.2.4 RFC 7230 (parser ought to trim traiing/leading OWS from value)
-                case START_OWS_HEADER_VALUE:
-                    while (isTabOrSpace(req[i])) {
-                        ++i;
-                    }
-                    pos = i;
-                    i -= 1;
-                    currState = HEADER_VALUE;
-                break;
-                //NOTE: according to ABNF in 3.2 rfc 7230, empty field-value allowed... maybe add flag to disallow?
-                case HEADER_VALUE:
-                    // //check that we actually had a value (some VCHAR/non delimiter, visible char), err if we dont
-                    // if (isspace(req[i])) {
-                    //     return -6; 
-                    // }
-                    // while (!isspace(req[i])) {
-                    //     ++i;
-                    // }
-                    // //at this point should check for space/htab for additional values
-                    // if (req[i] == ' ' || req[i] == '\t') {
-                    //     ++i; //go back to beginning while loop
-                    // }
-                    while (isVChar(req[i]) || isOBSText(req[i]) || isTabOrSpace(req[i])) {
-                        ++i;
-                    }
-                    //this logic could get more complicated with delimiting, support for quoted strings, comments, obs-text (3.2.6)
-                    //but this is extremely naive
-                    //For header value, if octet is not US-ASCII, can just treat as opaque data
-                    if (req[i++] != '\r' || req[i] != '\n') {
-                        return_code = BAD_HEADER_VALUE;
-                        return BAD_HEADER_VALUE;
-                    }
-
-                    this->headers[headerCnt].value = std::string_view(req).substr(pos, (i-1)-pos); //i-1 beccause we included the \n
-                    ++headerCnt; //increment header length/counter
-                    currState = HEADER_VALUE_END;
-                break;
-                case TRANSFER_CODING_VALUE: //this and content length is mutually exclusive strict?
-                    //1. should not apply chunked more than once to body2. chunked should be final transfer coding strict? MEANING IT SHOULD ALWAYS BE PRESENT ON A REQUEST IF TE IS USED
-                    if (flags.has_content_length) {
-                        return_code = IMPROPER_TRANSFER_CODING;
-                        return IMPROPER_TRANSFER_CODING;
-                    }
-                    while (req[i] == ' ' || req[i] == '\t') {
-                        ++i;
-                        ++pos;
-                    }
-                    while (req[i] != '\r' && req[i] != '\n') {
-                        while (req[i] == ' ' || req[i] == '\t') { //notice difference from initial loop is the ++pos, the initial loop is to eat whitespace AND adjust pos
-                            ++i;
-                        }   
-                        //opportunity to use findchar_fast delimit on the ',
-                        if (req[i] == 'c') {
-                            i++;
-                            if (req[i] == 'h') {
-                                //this sohuld be last encoding in requests otherwise error (? 3.3.3)
-                                if (req.substr(i, 6) == "hunked") {
-                                    i += 6;
-                                    flags.has_chunked_te = true;
-                                }
-                                else {
-                                    return_code = IMPROPER_TRANSFER_CODING;
-                                    return IMPROPER_TRANSFER_CODING;
-                                }
-                            }
-                            else if (req[i] == 'o') {
-                                if (req.substr(i, 7) == "ompress") {
-                                    flags.has_compress_te = true;
-                                    i += 7;
-                                }
-                                else {
-                                    return_code = IMPROPER_TRANSFER_CODING;
-                                    return IMPROPER_TRANSFER_CODING;
-                                }
-                            }
-                            else {
-                                return_code = IMPROPER_TRANSFER_CODING;
-                                return IMPROPER_TRANSFER_CODING;
-                            }
-                            //chunked or compress
-                        }
-                        else if (req[i] == 'd') {
-                            if (req.substr(i, 7) == "deflate") {
-                                flags.has_deflate_te = true;
-                                i += 7;
-                            } 
-                            else {
-                                return_code = IMPROPER_TRANSFER_CODING;
-                                return IMPROPER_TRANSFER_CODING;
-                            }
-                        }
-                        else if (req[i] == 'g') {
-                            if (req.substr(i, 4) == "gzip") {
-                                flags.has_gzip_te = true;
-                                i += 4;
-                            } 
-                            else {
-                                return_code = IMPROPER_TRANSFER_CODING;
-                                return IMPROPER_TRANSFER_CODING;
-                            }
-                        }
-                        else {
-                            return_code = IMPROPER_TRANSFER_CODING;
-                            return IMPROPER_TRANSFER_CODING;
-                        }
-
-                        while (req[i] == ' ' || req[i] == '\t') {
-                            ++i;
-                        }
-                        if (req[i] == ',') {
-                            i++;
-                            continue;
-                        }
-                        else if (req[i] == '\r') {
-                            break;
-                        }
-                        else {
-                            return_code = IMPROPER_TRANSFER_CODING;
-                            return IMPROPER_TRANSFER_CODING;
-                        }
-                        
-                    }
-                    if (req[i++] != '\r' || req[i] != '\n') {
-                        return_code = BAD_HEADER_VALUE;
-                        return BAD_HEADER_VALUE;
-                    }
-                    //for now only taking chunked, compress, deflate, gzip (only ones registered and valid in HTTP Transfer Coding registry)
-                    headers[headerCnt].value = std::string_view(req).substr(pos, (i-1)-pos); //i-1 beccause we included the \n
-                    ++headerCnt; //increment header length/counter
-                    currState = HEADER_VALUE_END;
-                break;
-                case CONTENT_LENGTH_VALUE: 
-                    while (req[i] == ' ' || req[i] == '\t') { //get rid of OWS
-                        ++i;
-                        ++pos;
-                    }
-                    //case where multiple content-length header fields strict?
-                    if (flags.has_content_length || flags.has_chunked_te || flags.has_gzip_te || flags.has_compress_te || flags.has_deflate_te) {
-                        return_code = IMPROPER_CONTENT_LENGTH;
-                        return IMPROPER_CONTENT_LENGTH;
-                    }
-                    //unlike normal header value need to check there was actually value (digit), also handles cases where multiple values (42, 42)
-                    while (isdigit(req[i])) {
-                        ++i;
-                    } 
-
-                    flags.has_content_length = true;
-                    {
-                        auto contentLenStr = std::string_view(req).substr(pos, (i)-pos); 
-                        headers[headerCnt].value = contentLenStr;
-                        int placeValue = 1;
-                        for (auto it = contentLenStr.rbegin(); it != contentLenStr.rend(); ++it) {
-                            content_length += (*it - '0') * placeValue;
-                            placeValue *= 10;
-                        } 
-                    }
-
-                    while (req[i] == ' ' || req[i] == '\t') { //get rid of OWS
-                        ++i;
-                    }
-                    //note \r\n check, value setter, etc. is repeated, probably should separate into another state
-                    if (req[i++] != '\r' || req[i] != '\n') {
-                        return_code = BAD_HEADER_VALUE;
-                        return BAD_HEADER_VALUE;
-                    }
-                    
-                    ++headerCnt; //increment header length/counter
-                    //If chunked transfer encoding, 
-                    currState = HEADER_VALUE_END;
-                break;
-                case HEADER_VALUE_END:
-                    if (req[i] == '\r') { //read ahead [i+1] here maybe unnecessary
-                        if (req[++i] != '\n') {
-                            return_code = BAD_BODY;
-                            return BAD_BODY;
-                        }
-                       currState = flags.has_chunked_te ? CHUNKED_BODY_CHUNK : BODY;
-                    }
-                    else if (isTokenChar(req[i])) {
-                        i-=1; //Since we are already on first character of header field, must revert for loop increment
-                       currState = HEADER_FIELD;
-                    }
-                    else {
-                        return_code = BAD_BODY;
-                        return BAD_BODY;
-                    }
+                    return parseHeaders(req, i);
                 break;
                 case BODY:
                     //skip through CRLF
@@ -473,56 +272,8 @@ class HTTPRequest {
                     return OK;
                 break;
                 case CHUNKED_BODY_CHUNK:
-                    //AT THIS POINT, CHUNK COULD BE CUT OFF AT ANY TIME, INSTEAD OF DOING PARSING/HAVING A STATE HERE, SHOULD LIKELY RETURN A STATUS CODE NOTING TO PARSE THE CHUNKS 
-                    
-                    //read size first
-                    pos = i;
-                    while (isHexDig(req[i])) { ++i; } 
-                    if (pos == i) {
-                        return_code = BAD_CHUNK;
-                        return BAD_CHUNK;
-                    }
-
-                    {
-                        auto chunkSizeStr = std::string_view(req).substr(pos, (i)-pos); 
-                        int placeValue = 1;
-                        std::cout << "CHUNKED" << chunkSizeStr;
-                        for (auto it = chunkSizeStr.rbegin(); it != chunkSizeStr.rend(); ++it) {
-                            if (std::isdigit(*it))
-                                content_length += (*it - '0') * placeValue;
-                            else 
-                                content_length += (std::isupper(*it) ? (*it - 'A') : (*it - 'a')) * placeValue;
-                            placeValue *= 16;
-                        } 
-
-                        //then read any extensions ([;token=token]) GENERALLY THIS AND SIZE OF CHUNK SHOULD HAVE LIMIT ALSO
-                        // And to be honest, this is likely going to be not used at all so... skipping over for now
-                        while (req[i] != '\r' && req[i] != '\n') { ++i; }
-
-                        // then CRLF
-                        if (req[i++] != '\r' || req[i++] != '\n') {
-                            return_code = BAD_CHUNK;
-                            return BAD_CHUNK;
-                        }
-                        // then data (just skip over)
-                        body = std::string_view(req).substr(i, content_length); 
-                        i += content_length;
-                        
-                        // then check CRLF
-                        if (req[i++] != '\r' || req[i++] != '\n') {
-                            return_code = BAD_CHUNK;
-                            return BAD_CHUNK;
-                        }
-                        
-                        // If chunk size was 0, go trailer which should parse like noraml headers (KEEP IN MIND SOME HEADERS ARE FORBBIDEN) otherwise loop
-                            // We can append to same header structure 
-                            // recipient MAY process the fields (aside from those forbidden above) as if they were appended to the message's header section.
-                        if (content_length == 0) {
-                            
-                        }
-                        return_code = OK;
-                        return OK;
-                    }
+                    // AT THIS POINT, CHUNK COULD BE CUT OFF AT ANY TIME, INSTEAD OF DOING PARSING/HAVING A STATE HERE, SHOULD LIKELY RETURN A STATUS CODE NOTING TO PARSE THE CHUNKS
+                    return parseChunked(req, i);
                 break;
             }
         }
@@ -531,13 +282,340 @@ class HTTPRequest {
         return OK;
     }
     //Create a separate method just for parsing the chunked
-    ErrorCode parseHeaders(std::string_view req) { 
+    ErrorCode parseHeaders(std::string_view req, size_t startPos = 0) {
+        size_t pos;
+        // std::string delimiter = "\r\n";
+        uint32_t reqLength = req.length();
+        for (size_t i = startPos; i < reqLength; i++ ) {
+            pos = i;
+            switch (currState) {
+            case HEADER_FIELD:
+                // HEADER FIELD STRICTLY TOKEN AND NO WHITESPACE
+                while (req[i] != ':')
+                {
+                    if (!isTokenChar(req[i]))
+                    {
+                        return_code = BAD_HEADER_FIELD;
+                        return BAD_HEADER_FIELD;
+                    }
+                    ++i;
+                }
+                // NO SPACES IN HEADER FIELD
+                this->headers[headerCnt].field = std::string_view(req).substr(pos, i - pos);
+                if (this->headers[headerCnt].field == "Transfer-Encoding")
+                { // generally only 1.1 feature (strict?)
+                    currState = TRANSFER_CODING_VALUE;
+                }
+                else if (this->headers[headerCnt].field == "Content-Length")
+                {
+                    currState = CONTENT_LENGTH_VALUE;
+                }
+                else
+                {
+                    currState = START_OWS_HEADER_VALUE;
+                }
+            break;
+            // according to 3.2.4 RFC 7230 (parser ought to trim traiing/leading OWS from value)
+            case START_OWS_HEADER_VALUE:
+                while (isTabOrSpace(req[i]))
+                {
+                    ++i;
+                }
+                pos = i;
+                i -= 1;
+                currState = HEADER_VALUE;
+            break;
+            // NOTE: according to ABNF in 3.2 rfc 7230, empty field-value allowed... maybe add flag to disallow?
+            case HEADER_VALUE:
+                // //check that we actually had a value (some VCHAR/non delimiter, visible char), err if we dont
+                // if (isspace(req[i])) {
+                //     return -6;
+                // }
+                // while (!isspace(req[i])) {
+                //     ++i;
+                // }
+                // //at this point should check for space/htab for additional values
+                // if (req[i] == ' ' || req[i] == '\t') {
+                //     ++i; //go back to beginning while loop
+                // }
+                while (isVChar(req[i]) || isOBSText(req[i]) || isTabOrSpace(req[i]))
+                {
+                    ++i;
+                }
+                // this logic could get more complicated with delimiting, support for quoted strings, comments, obs-text (3.2.6)
+                // but this is extremely naive
+                // For header value, if octet is not US-ASCII, can just treat as opaque data
+                if (req[i++] != '\r' || req[i] != '\n')
+                {
+                    return_code = BAD_HEADER_VALUE;
+                    return BAD_HEADER_VALUE;
+                }
+
+                this->headers[headerCnt].value = std::string_view(req).substr(pos, (i - 1) - pos); // i-1 beccause we included the \n
+                ++headerCnt;                                                                       // increment header length/counter
+                currState = HEADER_VALUE_END;
+            break;
+            case TRANSFER_CODING_VALUE: // this and content length is mutually exclusive strict?
+                // 1. should not apply chunked more than once to body2. chunked should be final transfer coding strict? MEANING IT SHOULD ALWAYS BE PRESENT ON A REQUEST IF TE IS USED
+                if (flags.has_content_length)
+                {
+                    return_code = IMPROPER_TRANSFER_CODING;
+                    return IMPROPER_TRANSFER_CODING;
+                }
+                while (req[i] == ' ' || req[i] == '\t')
+                {
+                    ++i;
+                    ++pos;
+                }
+                while (req[i] != '\r' && req[i] != '\n')
+                {
+                    while (req[i] == ' ' || req[i] == '\t')
+                    { // notice difference from initial loop is the ++pos, the initial loop is to eat whitespace AND adjust pos
+                        ++i;
+                    }
+                    // opportunity to use findchar_fast delimit on the ',
+                    if (req[i] == 'c')
+                    {
+                        i++;
+                        if (req[i] == 'h')
+                        {
+                            // this sohuld be last encoding in requests otherwise error (? 3.3.3)
+                            if (req.substr(i, 6) == "hunked")
+                            {
+                                i += 6;
+                                flags.has_chunked_te = true;
+                            }
+                            else
+                            {
+                                return_code = IMPROPER_TRANSFER_CODING;
+                                return IMPROPER_TRANSFER_CODING;
+                            }
+                        }
+                        else if (req[i] == 'o')
+                        {
+                            if (req.substr(i, 7) == "ompress")
+                            {
+                                flags.has_compress_te = true;
+                                i += 7;
+                            }
+                            else
+                            {
+                                return_code = IMPROPER_TRANSFER_CODING;
+                                return IMPROPER_TRANSFER_CODING;
+                            }
+                        }
+                        else
+                        {
+                            return_code = IMPROPER_TRANSFER_CODING;
+                            return IMPROPER_TRANSFER_CODING;
+                        }
+                        // chunked or compress
+                    }
+                    else if (req[i] == 'd')
+                    {
+                        if (req.substr(i, 7) == "deflate")
+                        {
+                            flags.has_deflate_te = true;
+                            i += 7;
+                        }
+                        else
+                        {
+                            return_code = IMPROPER_TRANSFER_CODING;
+                            return IMPROPER_TRANSFER_CODING;
+                        }
+                    }
+                    else if (req[i] == 'g')
+                    {
+                        if (req.substr(i, 4) == "gzip")
+                        {
+                            flags.has_gzip_te = true;
+                            i += 4;
+                        }
+                        else
+                        {
+                            return_code = IMPROPER_TRANSFER_CODING;
+                            return IMPROPER_TRANSFER_CODING;
+                        }
+                    }
+                    else
+                    {
+                        return_code = IMPROPER_TRANSFER_CODING;
+                        return IMPROPER_TRANSFER_CODING;
+                    }
+
+                    while (req[i] == ' ' || req[i] == '\t')
+                    {
+                        ++i;
+                    }
+                    if (req[i] == ',')
+                    {
+                        i++;
+                        continue;
+                    }
+                    else if (req[i] == '\r')
+                    {
+                        break;
+                    }
+                    else
+                    {
+                        return_code = IMPROPER_TRANSFER_CODING;
+                        return IMPROPER_TRANSFER_CODING;
+                    }
+                }
+                if (req[i++] != '\r' || req[i] != '\n')
+                {
+                    return_code = BAD_HEADER_VALUE;
+                    return BAD_HEADER_VALUE;
+                }
+                // for now only taking chunked, compress, deflate, gzip (only ones registered and valid in HTTP Transfer Coding registry)
+                headers[headerCnt].value = std::string_view(req).substr(pos, (i - 1) - pos); // i-1 beccause we included the \n
+                ++headerCnt;                                                                 // increment header length/counter
+                currState = HEADER_VALUE_END;
+            break;
+            case CONTENT_LENGTH_VALUE:
+                while (req[i] == ' ' || req[i] == '\t')
+                { // get rid of OWS
+                    ++i;
+                    ++pos;
+                }
+                // case where multiple content-length header fields strict?
+                if (flags.has_content_length || flags.has_chunked_te || flags.has_gzip_te || flags.has_compress_te || flags.has_deflate_te)
+                {
+                    return_code = IMPROPER_CONTENT_LENGTH;
+                    return IMPROPER_CONTENT_LENGTH;
+                }
+                // unlike normal header value need to check there was actually value (digit), also handles cases where multiple values (42, 42)
+                while (isdigit(req[i]))
+                {
+                    ++i;
+                }
+                if (pos == i)
+                {
+                    return IMPROPER_CONTENT_LENGTH;
+                }
+
+                flags.has_content_length = true;
+                {
+                    auto contentLenStr = std::string_view(req).substr(pos, (i)-pos);
+                    headers[headerCnt].value = contentLenStr;
+                    int placeValue = 1;
+                    for (auto it = contentLenStr.rbegin(); it != contentLenStr.rend(); ++it)
+                    {
+                        content_length += (*it - '0') * placeValue;
+                        placeValue *= 10;
+                    }
+                }
+
+                while (req[i] == ' ' || req[i] == '\t')
+                { // get rid of OWS
+                    ++i;
+                }
+                // note \r\n check, value setter, etc. is repeated, probably should separate into another state
+                if (req[i++] != '\r' || req[i] != '\n')
+                {
+                    return_code = BAD_HEADER_VALUE;
+                    return BAD_HEADER_VALUE;
+                }
+
+                ++headerCnt; // increment header length/counter
+                // If chunked transfer encoding,
+                currState = HEADER_VALUE_END;
+            break;
+            case HEADER_VALUE_END:
+                if (req[i] == '\r')
+                { // read ahead [i+1] here maybe unnecessary
+                    if (req[++i] != '\n')
+                    {
+                        return_code = BAD_BODY;
+                        return BAD_BODY;
+                    }
+                    currState = flags.has_chunked_te ? CHUNKED_BODY_CHUNK : BODY;
+                }
+                else if (isTokenChar(req[i]))
+                {
+                    i -= 1; // Since we are already on first character of header field, must revert for loop increment
+                    currState = HEADER_FIELD;
+                }
+                else
+                {
+                    return_code = BAD_BODY;
+                    return BAD_BODY;
+                }
+            break;
+            case CHUNKED_BODY_CHUNK:
+            case BODY:
+                return parse(req, i);
+            break;
+            }
+        }
+        return_code = OK;
         return OK;
     }
     //Create a sepraate method just for parsing the headers
-    ErrorCode parseChunked(std::string_view req) { 
-        return_code = OK;
-        return OK;
+    ErrorCode parseChunked(std::string_view req, size_t startPos = 0) {
+
+        size_t pos = 0;
+        // std::string delimiter = "\r\n";
+        uint32_t reqLength = req.length();
+        for (size_t i = startPos; i < reqLength; i++ ) {
+            // read size first
+            pos = i;
+            while (isHexDig(req[i]))
+            {
+                ++i;
+            }
+            if (pos == i)
+            {
+                return_code = BAD_CHUNK;
+                return BAD_CHUNK;
+            }
+
+            {
+                auto chunkSizeStr = std::string_view(req).substr(pos, (i)-pos);
+                int placeValue = 1;
+                for (auto it = chunkSizeStr.rbegin(); it != chunkSizeStr.rend(); ++it)
+                {
+                    if (std::isdigit(*it))
+                        content_length += (*it - '0') * placeValue;
+                    else
+                        content_length += (std::isupper(*it) ? (*it - 'A') : (*it - 'a')) * placeValue;
+                    placeValue *= 16;
+                }
+
+                // then read any extensions ([;token=token]) GENERALLY THIS AND SIZE OF CHUNK SHOULD HAVE LIMIT ALSO
+                //  And to be honest, this is likely going to be not used at all so... skipping over for now
+                while (req[i] != '\r' && req[i] != '\n')
+                {
+                    ++i;
+                }
+
+                // then CRLF
+                if (req[i++] != '\r' || req[i++] != '\n')
+                {
+                    return_code = BAD_CHUNK;
+                    return BAD_CHUNK;
+                }
+                // then data (just skip over)
+                body = std::string_view(req).substr(i, content_length);
+                i += content_length;
+
+                // then check CRLF
+                if (req[i++] != '\r' || req[i++] != '\n')
+                {
+                    return_code = BAD_CHUNK;
+                    return BAD_CHUNK;
+                }
+
+                // If chunk size was 0, go trailer which should parse like noraml headers (KEEP IN MIND SOME HEADERS ARE FORBBIDEN) otherwise loop
+                // We can append to same header structure
+                // recipient MAY process the fields (aside from those forbidden above) as if they were appended to the message's header section.
+                if (content_length == 0)
+                {
+                }
+                return_code = OK;
+                return OK;
+            }
+        }
     }
     //Creating separate methods for parsing different parts of message is like picohttp, 
         //but for chunked I think we can keep reuse same parser object like http-parser does it
