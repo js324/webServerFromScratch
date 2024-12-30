@@ -273,6 +273,8 @@ class HTTPRequest {
                 break;
                 case CHUNKED_BODY_CHUNK:
                     // AT THIS POINT, CHUNK COULD BE CUT OFF AT ANY TIME, INSTEAD OF DOING PARSING/HAVING A STATE HERE, SHOULD LIKELY RETURN A STATUS CODE NOTING TO PARSE THE CHUNKS
+                    currState = CHUNK_SIZE;
+                    content_length = -1;
                     return parseChunked(req, i);
                 break;
             }
@@ -553,69 +555,73 @@ class HTTPRequest {
     }
     //Create a sepraate method just for parsing the headers
     ErrorCode parseChunked(std::string_view req, size_t startPos = 0) {
-
         size_t pos = 0;
         // std::string delimiter = "\r\n";
         uint32_t reqLength = req.length();
         for (size_t i = startPos; i < reqLength; i++ ) {
-            // read size first
-            pos = i;
-            while (isHexDig(req[i]))
-            {
-                ++i;
-            }
-            if (pos == i)
-            {
-                return_code = BAD_CHUNK;
-                return BAD_CHUNK;
-            }
+            switch (currState) {
+                // read size first'
+                case CHUNK_SIZE: 
+                    while (isHexDig(req[i]))
+                    {
+                        if (content_length == -1) { //is this bad? we do this in order to check if there was a valid digit here
+                            content_length = 0;
+                        }
+                        if (std::isdigit(req[i]))
+                            content_length += (req[i] - '0') + content_length * 16;
+                        else
+                            content_length += (std::isupper(req[i]) ? (req[i] - 'A') : (req[i] - 'a')) + content_length * 16;
+                        ++i;
+                    }
+                    if (content_length == -1 || (req[i] != ';' && req[i] != '\r'))
+                    {
+                        return_code = BAD_CHUNK;
+                        return BAD_CHUNK;
+                    }
+                    currState = req[i] == '\r' && req[++i] == '\n' ? CHUNK_DATA : CHUNK_EXTENSIONS;
+                break;
+                case CHUNK_EXTENSIONS:
+                    // then read any extensions ([;token=token]) GENERALLY THIS AND SIZE OF CHUNK SHOULD HAVE LIMIT ALSO
+                    //  And to be honest, this is likely going to be not used at all so... skipping over for now
+                    while (req[i] != '\r' && req[i] != '\n')
+                    {
+                        ++i;
+                    }
 
-            {
-                auto chunkSizeStr = std::string_view(req).substr(pos, (i)-pos);
-                int placeValue = 1;
-                for (auto it = chunkSizeStr.rbegin(); it != chunkSizeStr.rend(); ++it)
-                {
-                    if (std::isdigit(*it))
-                        content_length += (*it - '0') * placeValue;
-                    else
-                        content_length += (std::isupper(*it) ? (*it - 'A') : (*it - 'a')) * placeValue;
-                    placeValue *= 16;
-                }
+                    // then CRLF
+                    if (req[i++] != '\r' || req[i] != '\n')
+                    {
+                        return_code = BAD_CHUNK;
+                        return BAD_CHUNK;
+                    }
+                currState = CHUNK_DATA;
+                break;
+                case CHUNK_DATA:
+                    // then data (just skip over)
+                    body = std::string_view(req).substr(i, content_length);
+                    i += content_length;
 
-                // then read any extensions ([;token=token]) GENERALLY THIS AND SIZE OF CHUNK SHOULD HAVE LIMIT ALSO
-                //  And to be honest, this is likely going to be not used at all so... skipping over for now
-                while (req[i] != '\r' && req[i] != '\n')
-                {
-                    ++i;
-                }
+                    // then check CRLF
+                    if (req[i++] != '\r' || req[i++] != '\n')
+                    {
+                        return_code = BAD_CHUNK;
+                        return BAD_CHUNK;
+                    }
+                    // If chunk size was 0, go trailer which should parse like noraml headers (KEEP IN MIND SOME HEADERS ARE FORBBIDEN) otherwise loop
+                    // We can append to same header structure
+                    // recipient MAY process the fields (aside from those forbidden above) as if they were appended to the message's header section.
+                    if (content_length == 0)
+                    {
 
-                // then CRLF
-                if (req[i++] != '\r' || req[i++] != '\n')
-                {
-                    return_code = BAD_CHUNK;
-                    return BAD_CHUNK;
-                }
-                // then data (just skip over)
-                body = std::string_view(req).substr(i, content_length);
-                i += content_length;
-
-                // then check CRLF
-                if (req[i++] != '\r' || req[i++] != '\n')
-                {
-                    return_code = BAD_CHUNK;
-                    return BAD_CHUNK;
-                }
-
-                // If chunk size was 0, go trailer which should parse like noraml headers (KEEP IN MIND SOME HEADERS ARE FORBBIDEN) otherwise loop
-                // We can append to same header structure
-                // recipient MAY process the fields (aside from those forbidden above) as if they were appended to the message's header section.
-                if (content_length == 0)
-                {
-                }
-                return_code = OK;
-                return OK;
+                    }
+                break;
+                case CHUNKED_HEADER_FIELD:
+                break;
+                
             }
         }
+        return_code = OK;
+        return OK;
     }
     //Creating separate methods for parsing different parts of message is like picohttp, 
         //but for chunked I think we can keep reuse same parser object like http-parser does it
