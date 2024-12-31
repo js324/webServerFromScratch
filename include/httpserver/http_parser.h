@@ -51,7 +51,12 @@ class HTTPRequest {
             CHUNK_SIZE,
             CHUNK_EXTENSIONS,
             CHUNK_DATA,
-            TRAILERS
+            CHUNK_DATA_CRLF,
+            TRAILER_HEADER_FIELD,
+            TRAILER_START_OWS_HEADER_VALUE,
+            TRAILER_HEADER_VALUE,
+            TRAILER_END_OWS_HEADER_VALUE,
+            TRAILER_HEADER_VALUE_END,
         };
         // note this is 8 bytes https://stackoverflow.com/questions/45575892/why-is-sizeofstdvariant-the-same-size-as-a-struct-with-the-same-members
         // does it matter? should we just use int or combine two enums into one?
@@ -562,7 +567,7 @@ class HTTPRequest {
             switch (currState) {
                 // read size first'
                 case CHUNK_SIZE: 
-                    while (isHexDig(req[i]))
+                    if (isHexDig(req[i]))
                     {
                         if (content_length == -1) { //is this bad? we do this in order to check if there was a valid digit here
                             content_length = 0;
@@ -571,53 +576,129 @@ class HTTPRequest {
                             content_length += (req[i] - '0') + content_length * 16;
                         else
                             content_length += (std::isupper(req[i]) ? (req[i] - 'A') : (req[i] - 'a')) + content_length * 16;
-                        ++i;
                     }
-                    if (content_length == -1 || (req[i] != ';' && req[i] != '\r'))
+                    if (content_length == -1) 
                     {
                         return_code = BAD_CHUNK;
                         return BAD_CHUNK;
                     }
-                    currState = req[i] == '\r' && req[++i] == '\n' ? CHUNK_DATA : CHUNK_EXTENSIONS;
+                    else if (req[i] != ';' && req[i] != '\r')
+                        currState = req[i] == '\r' ? CHUNK_DATA : CHUNK_EXTENSIONS;
+                    break;
                 break;
                 case CHUNK_EXTENSIONS:
                     // then read any extensions ([;token=token]) GENERALLY THIS AND SIZE OF CHUNK SHOULD HAVE LIMIT ALSO
                     //  And to be honest, this is likely going to be not used at all so... skipping over for now
-                    while (req[i] != '\r' && req[i] != '\n')
+                    if (req[i] == '\r')
                     {
-                        ++i;
+                        currState = CHUNK_DATA;
                     }
-
-                    // then CRLF
-                    if (req[i++] != '\r' || req[i] != '\n')
-                    {
-                        return_code = BAD_CHUNK;
-                        return BAD_CHUNK;
-                    }
-                currState = CHUNK_DATA;
                 break;
                 case CHUNK_DATA:
-                    // then data (just skip over)
-                    body = std::string_view(req).substr(i, content_length);
-                    i += content_length;
-
-                    // then check CRLF
-                    if (req[i++] != '\r' || req[i++] != '\n')
-                    {
+                    if (req[i] != '\n') {
                         return_code = BAD_CHUNK;
                         return BAD_CHUNK;
                     }
-                    // If chunk size was 0, go trailer which should parse like noraml headers (KEEP IN MIND SOME HEADERS ARE FORBBIDEN) otherwise loop
-                    // We can append to same header structure
-                    // recipient MAY process the fields (aside from those forbidden above) as if they were appended to the message's header section.
+                    // Must have been last chunk
                     if (content_length == 0)
                     {
+                        currState = req[i] == '\r' ? TRAILER_HEADER_VALUE_END : TRAILER_HEADER_FIELD;
+                    }
+                    int minOfLengths = reqLength - i < content_length ? reqLength - i : content_length;
+                    // then data (just skip over)
+                    body = std::string_view(req).substr(i, minOfLengths);
+                    content_length -= minOfLengths;
 
+                    if (content_length == 0)
+                    {
+                        currState = CHUNK_DATA_CRLF;
+                    }
+                break;
+                case CHUNK_DATA_CRLF:
+                    if (req[i] == '\r' || req[i] == '\n') {
+                        if (req[i] == '\r' && i+1 < reqLength && req[i+1] != '\n')
+                        {
+                            return_code = BAD_CHUNK;
+                            return BAD_CHUNK;
+                        }
+                        if (req[i] != '\r' && req[i] != '\n') {
+                            content_length = -1;
+                            currState = CHUNK_SIZE;
+                        }
                     }
                 break;
                 case CHUNKED_HEADER_FIELD:
+                    //We parse like normal, but there are still certain forbidden headers (can handle in server)
+                    return parseTrailers(req, i);    
                 break;
-                
+            }
+        }
+        return_code = OK;
+        return OK;
+    }
+    ErrorCode parseTrailers(std::string_view req, size_t startPos = 0) {
+        size_t pos;
+        uint32_t reqLength = req.length();
+        for (size_t i = startPos; i < reqLength; i++ ) {
+            pos = i;
+            switch (currState) {
+            case TRAILER_HEADER_FIELD:
+                while (req[i] != ':')
+                {
+                    if (!isTokenChar(req[i]))
+                    {
+                        return_code = BAD_HEADER_FIELD;
+                        return BAD_HEADER_FIELD;
+                    }
+                    ++i;
+                }
+                this->headers[headerCnt].field = std::string_view(req).substr(pos, i - pos);
+                currState = TRAILER_START_OWS_HEADER_VALUE;
+            break;
+            case TRAILER_START_OWS_HEADER_VALUE:
+                while (isTabOrSpace(req[i]))
+                {
+                    ++i;
+                }
+                pos = i;
+                i -= 1;
+                currState = TRAILER_HEADER_VALUE;
+            break;
+            case TRAILER_HEADER_VALUE:
+                while (isVChar(req[i]) || isOBSText(req[i]) || isTabOrSpace(req[i]))
+                {
+                    ++i;
+                }
+                if (req[i++] != '\r' || req[i] != '\n')
+                {
+                    return_code = BAD_HEADER_VALUE;
+                    return BAD_HEADER_VALUE;
+                }
+
+                this->headers[headerCnt].value = std::string_view(req).substr(pos, (i - 1) - pos); // i-1 beccause we included the \n
+                ++headerCnt;                                                                       // increment header length/counter
+                currState = TRAILER_HEADER_VALUE_END;
+            break;
+            case TRAILER_HEADER_VALUE_END:
+                if (req[i] == '\r')
+                {                     if (req[++i] != '\n')
+                    {
+                        return_code = BAD_TRAILER_FIELD;
+                        return BAD_TRAILER_FIELD;
+                    }
+                    break;
+                }
+                else if (isTokenChar(req[i]))
+                {
+                    i -= 1; // Since we are already on first character of header field, must revert for loop increment
+                    currState = TRAILER_HEADER_FIELD;
+                }
+                else
+                {
+                    return_code = BAD_TRAILER_FIELD;
+                    return BAD_TRAILER_FIELD;
+                }
+            break;
             }
         }
         return_code = OK;
